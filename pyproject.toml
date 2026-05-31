@@ -1,0 +1,12 @@
+[project]
+name = "pgman"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "pillow>=12.2.0",
+    "psycopg[binary]>=3.3.4",
+    "pyinstaller>=6.20.0",
+    "pyqt6>=6.11.0",
+]

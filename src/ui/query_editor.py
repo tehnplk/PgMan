@@ -1,0 +1,184 @@
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
+    QPlainTextEdit, QTableView, QTabWidget, QTextEdit,
+    QPushButton, QLabel, QToolBar
+)
+from PyQt6.QtCore import Qt, QAbstractTableModel, QThread, pyqtSignal
+from PyQt6.QtGui import QFont, QColor
+import time
+
+from src.ui.syntax_highlighter import SQLHighlighter
+
+class SqlTableModel(QAbstractTableModel):
+    def __init__(self, columns=None, rows=None, parent=None):
+        super().__init__(parent)
+        self.cols = columns or []
+        self.rows_data = rows or []
+
+    def rowCount(self, parent=None):
+        return len(self.rows_data)
+
+    def columnCount(self, parent=None):
+        return len(self.cols)
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        if role == Qt.ItemDataRole.DisplayRole:
+            val = self.rows_data[index.row()][index.column()]
+            if val is None:
+                return "[NULL]"
+            return str(val)
+        elif role == Qt.ItemDataRole.ForegroundRole:
+            # Color NULL cells slightly differently (muted)
+            val = self.rows_data[index.row()][index.column()]
+            if val is None:
+                return QColor("#5c6370")
+        return None
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if role == Qt.ItemDataRole.DisplayRole:
+            if orientation == Qt.Orientation.Horizontal:
+                return self.cols[section]
+            else:
+                return str(section + 1)
+        return None
+
+
+class QueryWorker(QThread):
+    finished = pyqtSignal(list, list, str, float)  # (columns, rows, message, duration)
+    failed = pyqtSignal(str, float)               # (error_message, duration)
+
+    def __init__(self, db_engine, sql):
+        super().__init__()
+        self.db_engine = db_engine
+        self.sql = sql
+
+    def run(self):
+        start_time = time.time()
+        try:
+            columns, rows, message = self.db_engine.execute_query(self.sql)
+            duration = time.time() - start_time
+            self.finished.emit(columns, rows, message, duration)
+        except Exception as e:
+            duration = time.time() - start_time
+            self.failed.emit(str(e), duration)
+
+
+class QueryEditorTab(QWidget):
+    def __init__(self, db_engine, database_name, schema_name="public", parent=None):
+        super().__init__(parent)
+        self.db_engine = db_engine
+        self.database_name = database_name
+        self.schema_name = schema_name
+        self.worker = None
+        
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Toolbar
+        toolbar = QToolBar()
+        self.run_btn = QPushButton("▶ Run")
+        self.run_btn.setObjectName("runBtn")
+        self.run_btn.clicked.connect(self.run_query)
+        toolbar.addWidget(self.run_btn)
+
+        toolbar.addSeparator()
+        self.status_label = QLabel(f"Connected to: {self.database_name} ({self.schema_name})")
+        self.status_label.setStyleSheet("color: #abb2bf; padding-left: 10px;")
+        toolbar.addWidget(self.status_label)
+
+        layout.addWidget(toolbar)
+
+        # Splitter between Editor and Results
+        splitter = QSplitter(Qt.Orientation.Vertical)
+
+        # SQL Editor
+        self.editor = QPlainTextEdit()
+        self.editor.setPlaceholderText("SELECT * FROM schema.table LIMIT 100;")
+        
+        # Set code font
+        font = QFont("Consolas", 11)
+        if not font.exactMatch():
+            font = QFont("Courier New", 11)
+        self.editor.setFont(font)
+        self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+
+        # Set Syntax Highlighter
+        self.highlighter = SQLHighlighter(self.editor.document())
+
+        splitter.addWidget(self.editor)
+
+        # Bottom Area Tabs (Results vs Messages)
+        self.bottom_tabs = QTabWidget()
+        
+        # Results grid
+        self.results_view = QTableView()
+        self.bottom_tabs.addTab(self.results_view, "Results")
+
+        # Messages log
+        self.message_log = QTextEdit()
+        self.message_log.setReadOnly(True)
+        self.message_log.setFont(font)
+        self.bottom_tabs.addTab(self.message_log, "Messages")
+
+        splitter.addWidget(self.bottom_tabs)
+        
+        # Set splitter sizes (approx 40% editor, 60% results)
+        splitter.setSizes([300, 450])
+
+        layout.addWidget(splitter)
+
+    def run_query(self):
+        sql = self.editor.toPlainText().strip()
+        if not sql:
+            return
+
+        # Check if query is selected text or whole editor
+        cursor = self.editor.textCursor()
+        if cursor.hasSelection():
+            sql = cursor.selectedText().replace('\u2029', '\n') # PyQt line separators
+
+        self.run_btn.setEnabled(False)
+        self.run_btn.setText("⏳ Executing...")
+        self.message_log.clear()
+        self.bottom_tabs.setCurrentIndex(1) # Switch to Messages tab during run
+        self.message_log.append("Executing query...")
+
+        # Run SQL in worker thread
+        self.worker = QueryWorker(self.db_engine, sql)
+        self.worker.finished.connect(self.on_query_success)
+        self.worker.failed.connect(self.on_query_failure)
+        self.worker.start()
+
+    def on_query_success(self, columns, rows, message, duration):
+        self.run_btn.setEnabled(True)
+        self.run_btn.setText("▶ Run")
+        
+        self.message_log.append(f"\n{message}")
+        self.message_log.append(f"Execution time: {duration:.3f} s")
+
+        if columns:
+            model = SqlTableModel(columns, rows, self)
+            self.results_view.setModel(model)
+            self.results_view.resizeColumnsToContents()
+            # Limit column sizes so very wide columns don't stretch indefinitely
+            for c in range(len(columns)):
+                if self.results_view.columnWidth(c) > 300:
+                    self.results_view.setColumnWidth(c, 300)
+            self.bottom_tabs.setCurrentIndex(0) # Show results
+        else:
+            self.results_view.setModel(None)
+            self.bottom_tabs.setCurrentIndex(1) # Remain on messages
+
+    def on_query_failure(self, error_message, duration):
+        self.run_btn.setEnabled(True)
+        self.run_btn.setText("▶ Run")
+        
+        self.message_log.append(f"\n❌ ERROR: {error_message}")
+        self.message_log.append(f"Execution time: {duration:.3f} s")
+        self.bottom_tabs.setCurrentIndex(1) # Show messages
