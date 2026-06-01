@@ -1,15 +1,17 @@
+import os
 import psycopg
 from psycopg.rows import dict_row
 
 class DbEngine:
-    def __init__(self, host, port, database, username, password, sslmode="prefer", db_type="postgresql"):
+    def __init__(self, host, port, database, username, password, sslmode="prefer", db_type="postgresql", file_path=""):
         self.host = host
-        self.port = int(port)
+        self.port = int(port) if port else 0
         self.database = database
         self.username = username
         self.password = password
         self.sslmode = sslmode
         self.db_type = db_type.lower()
+        self.file_path = file_path
         self._connection = None
         
         # Metadata Cache
@@ -27,6 +29,12 @@ class DbEngine:
             elif self.db_type == "mysql":
                 if self._connection.open:
                     return self._connection
+            elif self.db_type == "sqlite":
+                try:
+                    self._connection.execute("SELECT 1")
+                    return self._connection
+                except Exception:
+                    self._connection = None
             
         if self.db_type == "postgresql":
             self._connection = psycopg.connect(
@@ -49,6 +57,11 @@ class DbEngine:
                 connect_timeout=10,
                 autocommit=True
             )
+        elif self.db_type == "sqlite":
+            import sqlite3
+            self._connection = sqlite3.connect(self.file_path)
+            # Enable WAL mode for better concurrency
+            self._connection.execute("PRAGMA journal_mode=WAL")
         return self._connection
 
     def close(self):
@@ -60,6 +73,11 @@ class DbEngine:
             elif self.db_type == "mysql":
                 if self._connection.open:
                     self._connection.close()
+            elif self.db_type == "sqlite":
+                try:
+                    self._connection.close()
+                except Exception:
+                    pass
         self._connection = None
 
     def clear_cache(self):
@@ -73,6 +91,8 @@ class DbEngine:
         if self.db_type == "mysql":
             if schema in ("(default)", "public", "", None):
                 return self.database
+        elif self.db_type == "sqlite":
+            return "main"
         return schema
 
     def _quote_ident(self, name):
@@ -81,6 +101,8 @@ class DbEngine:
         return f'"{name}"'
 
     def quote_table_name(self, schema, table_name):
+        if self.db_type == "sqlite":
+            return f'"{table_name}"'
         resolved = self._resolve_schema(schema)
         return f"{self._quote_ident(resolved)}.{self._quote_ident(table_name)}"
 
@@ -124,10 +146,49 @@ class DbEngine:
                 raise e
             finally:
                 cursor.close()
+        elif self.db_type == "sqlite":
+            cursor = conn.cursor()
+            try:
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+                conn.commit()
+                message = f"Query executed successfully. Row count: {cursor.rowcount}"
+                if fetch_results and cursor.description:
+                    columns = [desc[0] for desc in cursor.description]
+                    rows = cursor.fetchall()
+                    return columns, rows, message
+                else:
+                    return [], [], message
+            except Exception as e:
+                raise e
+            finally:
+                cursor.close()
+
+    def _sqlite_execute(self, query, params=None):
+        """Helper for SQLite queries using ? placeholders."""
+        conn = self.connect()
+        cursor = conn.cursor()
+        try:
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            if cursor.description:
+                columns = [desc[0] for desc in cursor.description]
+                rows = cursor.fetchall()
+                return columns, rows
+            return [], []
+        finally:
+            cursor.close()
 
     def get_databases(self):
         """Fetch list of all databases on the server."""
-        if self.db_type == "mysql":
+        if self.db_type == "sqlite":
+            # SQLite has a single database — use filename as name
+            return [os.path.basename(self.file_path)]
+        elif self.db_type == "mysql":
             _, rows, _ = self.execute_query("SHOW DATABASES;")
             return [row[0] for row in rows]
         else:
@@ -137,7 +198,9 @@ class DbEngine:
 
     def get_schemas(self):
         """Fetch list of schemas in the current database."""
-        if self.db_type == "mysql":
+        if self.db_type == "sqlite":
+            return ["main"]
+        elif self.db_type == "mysql":
             return ["(default)"]
         else:
             query = """
@@ -154,14 +217,22 @@ class DbEngine:
         resolved = self._resolve_schema(schema)
         if resolved in self._tables_cache:
             return self._tables_cache[resolved]
-        query = """
-        SELECT table_name 
-        FROM information_schema.tables 
-        WHERE table_schema = %s AND table_type = 'BASE TABLE'
-        ORDER BY table_name;
-        """
-        _, rows, _ = self.execute_query(query, (resolved,))
-        tables = [row[0] for row in rows]
+        
+        if self.db_type == "sqlite":
+            _, rows = self._sqlite_execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
+            tables = [row[0] for row in rows]
+        else:
+            query = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = %s AND table_type = 'BASE TABLE'
+            ORDER BY table_name;
+            """
+            _, rows, _ = self.execute_query(query, (resolved,))
+            tables = [row[0] for row in rows]
+        
         self._tables_cache[resolved] = tables
         return tables
 
@@ -186,7 +257,36 @@ class DbEngine:
         resolved = self._resolve_schema(schema)
         if resolved in self._tables_detailed_cache:
             return self._tables_detailed_cache[resolved]
-        if self.db_type == "mysql":
+        
+        if self.db_type == "sqlite":
+            tables = self.get_tables(schema)
+            result = []
+            # Get total file size once
+            try:
+                file_size = os.path.getsize(self.file_path)
+            except Exception:
+                file_size = 0
+            
+            for t in tables:
+                # Get row count per table
+                try:
+                    _, count_rows = self._sqlite_execute(f'SELECT COUNT(*) FROM "{t}"')
+                    row_count = int(count_rows[0][0])
+                except Exception:
+                    row_count = 0
+                result.append({
+                    "name": t,
+                    "rows": f"{row_count:,}",
+                    "size": "-"
+                })
+            
+            # Show file size on first table if any
+            if result:
+                result[0]["size"] = self._format_size(file_size)
+            
+            self._tables_detailed_cache[resolved] = result
+            return result
+        elif self.db_type == "mysql":
             query = """
             SELECT 
                 table_name,
@@ -246,14 +346,22 @@ class DbEngine:
         resolved = self._resolve_schema(schema)
         if resolved in self._views_cache:
             return self._views_cache[resolved]
-        query = """
-        SELECT table_name 
-        FROM information_schema.tables 
-        WHERE table_schema = %s AND table_type = 'VIEW'
-        ORDER BY table_name;
-        """
-        _, rows, _ = self.execute_query(query, (resolved,))
-        views = [row[0] for row in rows]
+        
+        if self.db_type == "sqlite":
+            _, rows = self._sqlite_execute(
+                "SELECT name FROM sqlite_master WHERE type='view' ORDER BY name"
+            )
+            views = [row[0] for row in rows]
+        else:
+            query = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = %s AND table_type = 'VIEW'
+            ORDER BY table_name;
+            """
+            _, rows, _ = self.execute_query(query, (resolved,))
+            views = [row[0] for row in rows]
+        
         self._views_cache[resolved] = views
         return views
 
@@ -262,6 +370,19 @@ class DbEngine:
         Fetch columns of a table.
         Returns list of dicts: [{'name': colname, 'type': coltype, 'nullable': True/False, 'default': default}]
         """
+        if self.db_type == "sqlite":
+            _, rows = self._sqlite_execute(f'PRAGMA table_info("{table_name}")')
+            cols = []
+            for row in rows:
+                # PRAGMA table_info returns: cid, name, type, notnull, dflt_value, pk
+                cols.append({
+                    "name": row[1],
+                    "type": row[2] or "TEXT",
+                    "nullable": not bool(row[3]),
+                    "default": row[4]
+                })
+            return cols
+        
         resolved = self._resolve_schema(schema)
         query = """
         SELECT column_name, data_type, is_nullable, column_default
@@ -282,6 +403,15 @@ class DbEngine:
 
     def get_primary_keys(self, schema, table_name):
         """Fetch list of primary key columns for a table."""
+        if self.db_type == "sqlite":
+            _, rows = self._sqlite_execute(f'PRAGMA table_info("{table_name}")')
+            pk_cols = []
+            for row in rows:
+                # row[5] is the pk flag (1-based index in composite PK, 0 if not PK)
+                if row[5]:
+                    pk_cols.append(row[1])
+            return pk_cols
+        
         resolved = self._resolve_schema(schema)
         if self.db_type == "mysql":
             query = """
@@ -312,6 +442,21 @@ class DbEngine:
         if not updates_dict:
             return
         
+        if self.db_type == "sqlite":
+            set_clauses = []
+            params = []
+            for col, val in updates_dict.items():
+                set_clauses.append(f'"{col}" = ?')
+                params.append(val)
+            where_clauses = []
+            for col, val in primary_keys_dict.items():
+                where_clauses.append(f'"{col}" = ?')
+                params.append(val)
+            sql = f'UPDATE "{table_name}" SET {", ".join(set_clauses)} WHERE {" AND ".join(where_clauses)}'
+            self._sqlite_execute(sql, params)
+            self.connect().commit()
+            return
+        
         resolved = self._resolve_schema(schema)
         q_schema = self._quote_ident(resolved)
         q_table = self._quote_ident(table_name)
@@ -337,6 +482,16 @@ class DbEngine:
         if not row_dict:
             return
         
+        if self.db_type == "sqlite":
+            cols = list(row_dict.keys())
+            vals = list(row_dict.values())
+            col_placeholders = ", ".join([f'"{c}"' for c in cols])
+            val_placeholders = ", ".join(["?"] * len(vals))
+            sql = f'INSERT INTO "{table_name}" ({col_placeholders}) VALUES ({val_placeholders})'
+            self._sqlite_execute(sql, vals)
+            self.connect().commit()
+            return
+        
         resolved = self._resolve_schema(schema)
         q_schema = self._quote_ident(resolved)
         q_table = self._quote_ident(table_name)
@@ -356,6 +511,17 @@ class DbEngine:
         """
         if not row_identifier_dict:
             return
+        
+        if self.db_type == "sqlite":
+            where_clauses = []
+            params = []
+            for col, val in row_identifier_dict.items():
+                where_clauses.append(f'"{col}" = ?')
+                params.append(val)
+            sql = f'DELETE FROM "{table_name}" WHERE {" AND ".join(where_clauses)}'
+            self._sqlite_execute(sql, params)
+            self.connect().commit()
+            return
             
         resolved = self._resolve_schema(schema)
         q_schema = self._quote_ident(resolved)
@@ -372,6 +538,10 @@ class DbEngine:
 
     def get_functions(self, schema="public"):
         """Fetch list of functions/procedures in a schema."""
+        if self.db_type == "sqlite":
+            # SQLite has no stored procedures/functions
+            return []
+        
         resolved = self._resolve_schema(schema)
         if resolved in self._funcs_cache:
             return self._funcs_cache[resolved]
@@ -400,6 +570,9 @@ class DbEngine:
 
     def get_function_definition(self, schema, func_name):
         """Fetch full CREATE OR REPLACE FUNCTION SQL definition."""
+        if self.db_type == "sqlite":
+            return "-- SQLite does not support stored functions."
+        
         resolved = self._resolve_schema(schema)
         if self.db_type == "mysql":
             query = """
@@ -429,6 +602,18 @@ class DbEngine:
                 return f"-- Definition for {resolved}.{func_name} could not be retrieved."
 
     def get_table_definition(self, schema, table_name):
+        if self.db_type == "sqlite":
+            try:
+                _, rows = self._sqlite_execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    (table_name,)
+                )
+                if rows and rows[0][0]:
+                    return rows[0][0] + ";"
+                return f"-- Definition for {table_name} could not be retrieved."
+            except Exception as e:
+                return f"-- Definition for {table_name} could not be retrieved: {str(e)}"
+        
         resolved = self._resolve_schema(schema)
         if self.db_type == "mysql":
             q_table = f"`{resolved}`.`{table_name}`"
@@ -655,6 +840,18 @@ class DbEngine:
                 return f"-- Definition for {resolved}.{table_name} could not be retrieved: {str(e)}"
 
     def get_view_definition(self, schema, view_name):
+        if self.db_type == "sqlite":
+            try:
+                _, rows = self._sqlite_execute(
+                    "SELECT sql FROM sqlite_master WHERE type='view' AND name=?",
+                    (view_name,)
+                )
+                if rows and rows[0][0]:
+                    return rows[0][0] + ";"
+                return f"-- Definition for {view_name} could not be retrieved."
+            except Exception as e:
+                return f"-- Definition for {view_name} could not be retrieved: {str(e)}"
+        
         resolved = self._resolve_schema(schema)
         if self.db_type == "mysql":
             q_table = f"`{resolved}`.`{view_name}`"
@@ -688,4 +885,3 @@ class DbEngine:
                 return f"-- Definition for {resolved}.{view_name} could not be retrieved."
             except Exception as e:
                 return f"-- Definition for {resolved}.{view_name} could not be retrieved: {str(e)}"
-

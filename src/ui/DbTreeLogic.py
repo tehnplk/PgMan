@@ -71,33 +71,58 @@ class DbTreeWidget(DbTreeUI):
         finally:
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 
+    def _create_engine(self, profile, dbname=None):
+        """Helper to create a DbEngine from a profile."""
+        return DbEngine(
+            host=profile.get("host", ""),
+            port=profile.get("port", 0),
+            database=dbname or profile.get("database", ""),
+            username=profile.get("username", ""),
+            password=profile.get("password", ""),
+            sslmode=profile.get("sslmode", "prefer"),
+            db_type=profile.get("db_type", "PostgreSQL"),
+            file_path=profile.get("file_path", "")
+        )
+
     def expand_connection(self, item, profile):
         item.takeChildren()
 
-        engine = DbEngine(
-            host=profile["host"],
-            port=profile["port"],
-            database=profile["database"],
-            username=profile["username"],
-            password=profile["password"],
-            sslmode=profile.get("sslmode", "prefer"),
-            db_type=profile.get("db_type", "PostgreSQL")
-        )
+        engine = self._create_engine(profile)
         engine.connect()
-        self.db_engines[(profile["id"], profile["database"])] = engine
         
-        databases = engine.get_databases()
-        for db in databases:
+        db_type = profile.get("db_type", "PostgreSQL").lower()
+        
+        if db_type == "sqlite":
+            # SQLite has a single database — use filename
+            import os
+            db_display = os.path.basename(profile.get("file_path", "database"))
+            self.db_engines[(profile["id"], db_display)] = engine
+            
             db_item = QTreeWidgetItem(item)
-            db_item.setText(0, db)
+            db_item.setText(0, db_display)
             db_item.setData(0, Qt.ItemDataRole.UserRole, {
                 "type": NODE_TYPE_DATABASE,
                 "profile": profile,
-                "dbname": db,
+                "dbname": db_display,
                 "loaded": False
             })
             dummy = QTreeWidgetItem(db_item)
             dummy.setText(0, "Loading...")
+        else:
+            self.db_engines[(profile["id"], profile["database"])] = engine
+            
+            databases = engine.get_databases()
+            for db in databases:
+                db_item = QTreeWidgetItem(item)
+                db_item.setText(0, db)
+                db_item.setData(0, Qt.ItemDataRole.UserRole, {
+                    "type": NODE_TYPE_DATABASE,
+                    "profile": profile,
+                    "dbname": db,
+                    "loaded": False
+                })
+                dummy = QTreeWidgetItem(db_item)
+                dummy.setText(0, "Loading...")
 
     def expand_database(self, item, data):
         item.takeChildren()
@@ -108,19 +133,24 @@ class DbTreeWidget(DbTreeUI):
         if engine_key in self.db_engines:
             engine = self.db_engines[engine_key]
         else:
-            engine = DbEngine(
-                host=profile["host"],
-                port=profile["port"],
-                database=dbname,
-                username=profile["username"],
-                password=profile["password"],
-                sslmode=profile.get("sslmode", "prefer"),
-                db_type=profile.get("db_type", "PostgreSQL")
-            )
+            engine = self._create_engine(profile, dbname)
             engine.connect()
             self.db_engines[engine_key] = engine
             
         schemas = engine.get_schemas()
+        
+        db_type = profile.get("db_type", "PostgreSQL").lower()
+        
+        if db_type == "sqlite" and len(schemas) == 1:
+            # For SQLite, skip the schema level and go directly to table/view/function groups
+            self.expand_schema(item, {
+                "profile": profile,
+                "dbname": dbname,
+                "schema": schemas[0]
+            })
+            # Mark as loaded so the schema groups are visible immediately
+            return
+        
         for schema in schemas:
             schema_item = QTreeWidgetItem(item)
             schema_item.setText(0, schema)
@@ -363,15 +393,7 @@ class DbTreeWidget(DbTreeUI):
         
         engine = self.db_engines.get((profile["id"], dbname))
         if not engine:
-            engine = DbEngine(
-                host=profile["host"],
-                port=profile["port"],
-                database=dbname,
-                username=profile["username"],
-                password=profile["password"],
-                sslmode=profile.get("sslmode", "prefer"),
-                db_type=profile.get("db_type", "PostgreSQL")
-            )
+            engine = self._create_engine(profile, dbname)
             engine.connect()
             self.db_engines[(profile["id"], dbname)] = engine
             

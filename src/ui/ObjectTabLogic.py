@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QTableWidgetItem, QListWidgetItem, QMessageBox
-from PyQt6.QtCore import Qt, pyqtSignal, QSize
-from PyQt6.QtGui import QCursor, QPixmap, QPainter, QFont, QIcon
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRectF
+from PyQt6.QtGui import QCursor, QPixmap, QPainter, QFont, QIcon, QImage
 import re
 
 from src.ui.ObjectTabUI import ObjectTabUI
@@ -9,13 +9,101 @@ from src.ui.UiUtils import show_exception_dialog
 def emoji_to_icon(emoji):
     icon = QIcon()
     for size in (16, 24, 32, 48, 64, 96):
+        render_size = max(128, size * 2)
+        image = QImage(render_size, render_size, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(Qt.GlobalColor.transparent)
+        
+        painter = QPainter(image)
+        font = QFont("Segoe UI Emoji", int(render_size * 0.85))
+        painter.setFont(font)
+        painter.drawText(image.rect(), Qt.AlignmentFlag.AlignCenter, emoji)
+        painter.end()
+        
+        # Scan for bounding box of non-transparent pixels (alpha > 10)
+        min_y = -1
+        for y in range(render_size):
+            row_has_alpha = False
+            for x in range(render_size):
+                if ((image.pixel(x, y) >> 24) & 0xFF) > 10:
+                    row_has_alpha = True
+                    break
+            if row_has_alpha:
+                min_y = y
+                break
+        
+        if min_y == -1:
+            # Fallback to simple rendering if crop fails or emoji is empty
+            pixmap = QPixmap(size, size)
+            pixmap.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pixmap)
+            font = QFont("Segoe UI Emoji", int(size * 0.75))
+            painter.setFont(font)
+            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, emoji)
+            painter.end()
+            icon.addPixmap(pixmap)
+            continue
+            
+        max_y = -1
+        for y in range(render_size - 1, min_y - 1, -1):
+            row_has_alpha = False
+            for x in range(render_size):
+                if ((image.pixel(x, y) >> 24) & 0xFF) > 10:
+                    row_has_alpha = True
+                    break
+            if row_has_alpha:
+                max_y = y
+                break
+                
+        min_x = -1
+        for x in range(render_size):
+            col_has_alpha = False
+            for y in range(min_y, max_y + 1):
+                if ((image.pixel(x, y) >> 24) & 0xFF) > 10:
+                    col_has_alpha = True
+                    break
+            if col_has_alpha:
+                min_x = x
+                break
+                
+        max_x = -1
+        for x in range(render_size - 1, min_x - 1, -1):
+            col_has_alpha = False
+            for y in range(min_y, max_y + 1):
+                if ((image.pixel(x, y) >> 24) & 0xFF) > 10:
+                    col_has_alpha = True
+                    break
+            if col_has_alpha:
+                max_x = x
+                break
+                
+        width = max_x - min_x + 1
+        height = max_y - min_y + 1
+        
+        cropped = image.copy(min_x, min_y, width, height)
+        
+        # Fit into target size leaving a tiny 5% margin
+        margin = 0.05
+        target_max_w = size * (1 - 2 * margin)
+        target_max_h = size * (1 - 2 * margin)
+        
+        aspect = width / height
+        if aspect > 1:
+            w = target_max_w
+            h = w / aspect
+        else:
+            h = target_max_h
+            w = h * aspect
+            
+        x_offset = (size - w) / 2
+        y_offset = (size - h) / 2
+        
         pixmap = QPixmap(size, size)
         pixmap.fill(Qt.GlobalColor.transparent)
         
         painter = QPainter(pixmap)
-        font = QFont("Segoe UI Emoji", int(size * 0.75))
-        painter.setFont(font)
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, emoji)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.drawImage(QRectF(x_offset, y_offset, w, h), cropped)
         painter.end()
         
         icon.addPixmap(pixmap)
