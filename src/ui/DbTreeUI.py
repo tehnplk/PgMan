@@ -5,6 +5,7 @@ class DbTreeUI(QTreeWidget):
     # Signals to communicate actions back to main window
     open_query_editor_signal = pyqtSignal(object, str, str, str)  # (db_engine, database_name, schema_name, initial_sql)
     open_table_viewer_signal = pyqtSignal(object, str, str, str) # (db_engine, database_name, schema_name, table_name)
+    open_object_tab_signal = pyqtSignal(object, str, str, str, list) # (db_engine, database_name, schema_name, group_name, children)
     connection_changed_signal = pyqtSignal()
 
     def __init__(self, parent=None):

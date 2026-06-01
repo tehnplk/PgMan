@@ -2,7 +2,8 @@ from PyQt6.QtWidgets import QWidget
 from PyQt6.QtCore import Qt, QAbstractTableModel, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 import time
-from src.ui.query_editor_ui import QueryEditorUI
+from src.ui.QueryEditorUI import QueryEditorUI
+from src.ui.UiUtils import resize_columns_fast
 
 class SqlTableModel(QAbstractTableModel):
     def __init__(self, columns=None, rows=None, parent=None):
@@ -97,10 +98,7 @@ class QueryEditorTab(QueryEditorUI):
         if columns:
             model = SqlTableModel(columns, rows, self)
             self.results_view.setModel(model)
-            self.results_view.resizeColumnsToContents()
-            for c in range(len(columns)):
-                if self.results_view.columnWidth(c) > 300:
-                    self.results_view.setColumnWidth(c, 300)
+            resize_columns_fast(self.results_view, columns, rows)
             self.bottom_tabs.setCurrentIndex(0)
         else:
             self.results_view.setModel(None)

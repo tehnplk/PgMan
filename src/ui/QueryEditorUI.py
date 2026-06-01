@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
-from src.ui.syntax_highlighter import SQLHighlighter
+from src.ui.SyntaxHighlighter import SQLHighlighter
 
 class QueryEditorUI(QWidget):
     def __init__(self, database_name, schema_name="public", parent=None):

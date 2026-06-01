@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QLineEdit, QComboBox, QPushButton
+    QLineEdit, QComboBox, QPushButton, QLabel
 )
 
 class ConnectionDialogUI(QDialog):
@@ -15,7 +15,12 @@ class ConnectionDialogUI(QDialog):
         self.setModal(True)
 
         layout = QVBoxLayout(self)
-        form_layout = QFormLayout()
+        self.form_layout = QFormLayout()
+
+        # Database Type selection
+        self.db_type_combo = QComboBox()
+        self.db_type_combo.addItems(["PostgreSQL", "MySQL"])
+        self.db_type_combo.setCurrentText(self.profile.get("db_type", "PostgreSQL"))
 
         # Input fields
         self.name_input = QLineEdit()
@@ -43,20 +48,23 @@ class ConnectionDialogUI(QDialog):
         self.pass_input.setPlaceholderText("password")
         self.pass_input.setText(self.profile.get("password", ""))
 
+        # SSL fields
+        self.ssl_label = QLabel("SSL Mode:")
         self.ssl_combo = QComboBox()
         self.ssl_combo.addItems(["disable", "allow", "prefer", "require", "verify-ca", "verify-full"])
         self.ssl_combo.setCurrentText(self.profile.get("sslmode", "prefer"))
 
         # Add to form
-        form_layout.addRow("Connection Name:", self.name_input)
-        form_layout.addRow("Host:", self.host_input)
-        form_layout.addRow("Port:", self.port_input)
-        form_layout.addRow("Database:", self.db_input)
-        form_layout.addRow("Username:", self.user_input)
-        form_layout.addRow("Password:", self.pass_input)
-        form_layout.addRow("SSL Mode:", self.ssl_combo)
+        self.form_layout.addRow("Database Type:", self.db_type_combo)
+        self.form_layout.addRow("Connection Name:", self.name_input)
+        self.form_layout.addRow("Host:", self.host_input)
+        self.form_layout.addRow("Port:", self.port_input)
+        self.form_layout.addRow("Database:", self.db_input)
+        self.form_layout.addRow("Username:", self.user_input)
+        self.form_layout.addRow("Password:", self.pass_input)
+        self.form_layout.addRow(self.ssl_label, self.ssl_combo)
 
-        layout.addLayout(form_layout)
+        layout.addLayout(self.form_layout)
 
         # Buttons
         btn_layout = QHBoxLayout()

@@ -1,7 +1,39 @@
 from PyQt6.QtWidgets import QMessageBox
-from PyQt6.QtCore import Qt, QAbstractTableModel
+from PyQt6.QtCore import Qt, QAbstractTableModel, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
-from src.ui.table_viewer_ui import TableViewerUI
+from src.ui.TableViewerUI import TableViewerUI
+from src.ui.UiUtils import resize_columns_fast, show_exception_dialog
+
+class DataLoaderWorker(QThread):
+    finished = pyqtSignal(list, list, int, list)  # (columns, rows, total_rows, primary_keys)
+    failed = pyqtSignal(str)                       # (error_message)
+
+    def __init__(self, db_engine, schema, table_name, page_size, offset):
+        super().__init__()
+        self.db_engine = db_engine
+        self.schema = schema
+        self.table_name = table_name
+        self.page_size = page_size
+        self.offset = offset
+
+    def run(self):
+        try:
+            # 1. Fetch total rows count
+            quoted_table = self.db_engine.quote_table_name(self.schema, self.table_name)
+            count_sql = f'SELECT count(*) FROM {quoted_table}'
+            _, count_rows, _ = self.db_engine.execute_query(count_sql)
+            total_rows = count_rows[0][0] if count_rows else 0
+            
+            # 2. Fetch current page records
+            sql = f'SELECT * FROM {quoted_table} LIMIT {self.page_size} OFFSET {self.offset}'
+            columns, rows, _ = self.db_engine.execute_query(sql)
+            
+            # 3. Fetch primary keys
+            pks = self.db_engine.get_primary_keys(self.schema, self.table_name)
+            
+            self.finished.emit(columns, rows, total_rows, pks)
+        except Exception as e:
+            self.failed.emit(str(e))
 
 class EditableSqlTableModel(QAbstractTableModel):
     def __init__(self, columns=None, rows=None, primary_keys=None, parent=None):
@@ -178,6 +210,7 @@ class TableViewerTab(TableViewerUI):
         self.delete_btn.clicked.connect(self.delete_row)
         self.commit_btn.clicked.connect(self.commit_changes)
         self.refresh_btn.clicked.connect(self.load_data)
+        self.ddl_btn.clicked.connect(self.show_ddl)
         
         self.first_page_btn.clicked.connect(self.go_first_page)
         self.prev_page_btn.clicked.connect(self.go_prev_page)
@@ -186,51 +219,82 @@ class TableViewerTab(TableViewerUI):
         
         self.limit_combo.currentTextChanged.connect(self.on_limit_changed)
 
-    def load_data(self):
-        self.setCursor(Qt.CursorShape.WaitCursor)
+    def set_loading_state(self, is_loading):
+        self.add_btn.setEnabled(not is_loading)
+        self.delete_btn.setEnabled(not is_loading)
+        self.commit_btn.setEnabled(not is_loading)
+        self.refresh_btn.setEnabled(not is_loading)
+        self.ddl_btn.setEnabled(not is_loading)
+        
+        self.first_page_btn.setEnabled(not is_loading)
+        self.prev_page_btn.setEnabled(not is_loading)
+        self.next_page_btn.setEnabled(not is_loading)
+        self.last_page_btn.setEnabled(not is_loading)
+        self.limit_combo.setEnabled(not is_loading)
+        
+        if is_loading:
+            self.setCursor(Qt.CursorShape.WaitCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def show_ddl(self):
         try:
-            # 1. Fetch total rows count
-            count_sql = f'SELECT count(*) FROM "{self.schema}"."{self.table_name}"'
-            _, count_rows, _ = self.db_engine.execute_query(count_sql)
-            self.total_rows = count_rows[0][0] if count_rows else 0
+            self.setCursor(Qt.CursorShape.WaitCursor)
             
-            # 2. Update pagination calculations
-            self.page_size = int(self.limit_combo.currentText())
-            self.total_pages = max(1, (self.total_rows + self.page_size - 1) // self.page_size)
-            if self.current_page > self.total_pages:
-                self.current_page = self.total_pages
+            # Check if this object is a view or a table
+            views = self.db_engine.get_views(self.schema)
+            is_view = (self.table_name in views)
+            
+            if is_view:
+                sql_def = self.db_engine.get_view_definition(self.schema, self.table_name)
+            else:
+                sql_def = self.db_engine.get_table_definition(self.schema, self.table_name)
                 
-            self.page_label.setText(f"Page {self.current_page} of {self.total_pages}")
-            self.status_bar_lbl.setText(f"Table: {self.schema}.{self.table_name} | Total Rows: {self.total_rows}")
-            
-            # 3. Fetch current page records
-            offset = (self.current_page - 1) * self.page_size
-            sql = f'SELECT * FROM "{self.schema}"."{self.table_name}" LIMIT {self.page_size} OFFSET {offset}'
-            columns, rows, _ = self.db_engine.execute_query(sql)
-            
-            # 4. Fetch primary keys
-            pks = self.db_engine.get_primary_keys(self.schema, self.table_name)
-            
-            # 5. Populate model
-            self.model = EditableSqlTableModel(columns, rows, pks, self)
-            self.table_view.setModel(self.model)
-            
-            # Resize
-            self.table_view.resizeColumnsToContents()
-            for c in range(len(columns)):
-                if self.table_view.columnWidth(c) > 300:
-                    self.table_view.setColumnWidth(c, 300)
-                    
-            # Enable/disable page buttons
-            self.first_page_btn.setEnabled(self.current_page > 1)
-            self.prev_page_btn.setEnabled(self.current_page > 1)
-            self.next_page_btn.setEnabled(self.current_page < self.total_pages)
-            self.last_page_btn.setEnabled(self.current_page < self.total_pages)
-            
+            main_win = self.window()
+            if hasattr(main_win, "add_query_tab"):
+                main_win.add_query_tab(self.db_engine, self.dbname, self.schema, sql_def)
         except Exception as e:
-            QMessageBox.critical(self, "Error Loading Table", f"Failed to fetch table records:\n{str(e)}")
+            show_exception_dialog(self, "Error", f"Could not retrieve definition:\n{str(e)}")
         finally:
             self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def load_data(self):
+        self.set_loading_state(True)
+        self.status_bar_lbl.setText("⏳ Loading table data...")
+        
+        self.page_size = int(self.limit_combo.currentText())
+        offset = (self.current_page - 1) * self.page_size
+        
+        self.worker = DataLoaderWorker(self.db_engine, self.schema, self.table_name, self.page_size, offset)
+        self.worker.finished.connect(self.on_load_success)
+        self.worker.failed.connect(self.on_load_failed)
+        self.worker.start()
+
+    def on_load_success(self, columns, rows, total_rows, pks):
+        self.set_loading_state(False)
+        self.total_rows = total_rows
+        
+        self.total_pages = max(1, (self.total_rows + self.page_size - 1) // self.page_size)
+        if self.current_page > self.total_pages:
+            self.current_page = self.total_pages
+            
+        self.page_label.setText(f"Page {self.current_page} of {self.total_pages}")
+        self.status_bar_lbl.setText(f"Table: {self.schema}.{self.table_name} | Total Rows: {self.total_rows}")
+        
+        self.model = EditableSqlTableModel(columns, rows, pks, self)
+        self.table_view.setModel(self.model)
+        
+        resize_columns_fast(self.table_view, columns, rows)
+        
+        self.first_page_btn.setEnabled(self.current_page > 1)
+        self.prev_page_btn.setEnabled(self.current_page > 1)
+        self.next_page_btn.setEnabled(self.current_page < self.total_pages)
+        self.last_page_btn.setEnabled(self.current_page < self.total_pages)
+
+    def on_load_failed(self, error_message):
+        self.set_loading_state(False)
+        self.status_bar_lbl.setText(f"Error loading table: {self.schema}.{self.table_name}")
+        show_exception_dialog(self, "Error Loading Table", f"Failed to fetch table records:\n{error_message}")
 
     def add_row(self):
         if hasattr(self, "model"):
@@ -287,7 +351,7 @@ class TableViewerTab(TableViewerUI):
             QMessageBox.information(self, "Success", "Changes successfully committed to database!")
             self.load_data()
         except Exception as e:
-            QMessageBox.critical(self, "Commit Failed", f"An error occurred while saving changes:\n{str(e)}\n\nReloading table data...")
+            show_exception_dialog(self, "Commit Failed", f"An error occurred while saving changes:\n{str(e)}\n\nReloading table data...")
             self.load_data()
         finally:
             self.setCursor(Qt.CursorShape.ArrowCursor)

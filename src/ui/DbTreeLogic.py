@@ -1,10 +1,11 @@
 from PyQt6.QtWidgets import QTreeWidgetItem, QMenu, QMessageBox, QDialog
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCursor
-from src.db_engine import DbEngine
-from src.ui.connection_dlg_logic import ConnectionDialog
-from src.ui.db_tree_ui import DbTreeUI
-import src.config as config
+from src.DbEngine import DbEngine
+from src.ui.ConnectionDlgLogic import ConnectionDialog
+from src.ui.DbTreeUI import DbTreeUI
+import src.Config as config
+from src.ui.UiUtils import show_exception_dialog
 
 NODE_TYPE_CONNECTION = "connection"
 NODE_TYPE_DATABASE_LIST = "db_list"
@@ -24,6 +25,7 @@ class DbTreeWidget(DbTreeUI):
         self.customContextMenuRequested.connect(self.show_context_menu)
         self.itemExpanded.connect(self.on_item_expanded)
         self.itemDoubleClicked.connect(self.on_item_double_clicked)
+        self.itemClicked.connect(self.on_item_clicked)
         
         # Cache active DB engines by connection ID and database name
         self.db_engines = {}
@@ -60,17 +62,11 @@ class DbTreeWidget(DbTreeUI):
                 self.expand_database(item, data)
             elif node_type == NODE_TYPE_SCHEMA:
                 self.expand_schema(item, data)
-            elif node_type == NODE_TYPE_TABLE_GROUP:
-                self.expand_table_group(item, data)
-            elif node_type == NODE_TYPE_VIEW_GROUP:
-                self.expand_view_group(item, data)
-            elif node_type == NODE_TYPE_FUNCTION_GROUP:
-                self.expand_function_group(item, data)
             
             data["loaded"] = True
             item.setData(0, Qt.ItemDataRole.UserRole, data)
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to expand items:\n{str(e)}")
+            show_exception_dialog(self, "Error", f"Failed to expand items:\n{str(e)}")
             item.setExpanded(False)
         finally:
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
@@ -84,7 +80,8 @@ class DbTreeWidget(DbTreeUI):
             database=profile["database"],
             username=profile["username"],
             password=profile["password"],
-            sslmode=profile["sslmode"]
+            sslmode=profile.get("sslmode", "prefer"),
+            db_type=profile.get("db_type", "PostgreSQL")
         )
         engine.connect()
         self.db_engines[(profile["id"], profile["database"])] = engine
@@ -117,7 +114,8 @@ class DbTreeWidget(DbTreeUI):
                 database=dbname,
                 username=profile["username"],
                 password=profile["password"],
-                sslmode=profile["sslmode"]
+                sslmode=profile.get("sslmode", "prefer"),
+                db_type=profile.get("db_type", "PostgreSQL")
             )
             engine.connect()
             self.db_engines[engine_key] = engine
@@ -149,10 +147,8 @@ class DbTreeWidget(DbTreeUI):
             "profile": profile,
             "dbname": dbname,
             "schema": schema,
-            "loaded": False
+            "loaded": True
         })
-        dummy_t = QTreeWidgetItem(table_group)
-        dummy_t.setText(0, "Loading...")
 
         view_group = QTreeWidgetItem(item)
         view_group.setText(0, "Views")
@@ -161,10 +157,8 @@ class DbTreeWidget(DbTreeUI):
             "profile": profile,
             "dbname": dbname,
             "schema": schema,
-            "loaded": False
+            "loaded": True
         })
-        dummy_v = QTreeWidgetItem(view_group)
-        dummy_v.setText(0, "Loading...")
 
         func_group = QTreeWidgetItem(item)
         func_group.setText(0, "Functions")
@@ -173,67 +167,8 @@ class DbTreeWidget(DbTreeUI):
             "profile": profile,
             "dbname": dbname,
             "schema": schema,
-            "loaded": False
+            "loaded": True
         })
-        dummy_f = QTreeWidgetItem(func_group)
-        dummy_f.setText(0, "Loading...")
-
-    def expand_table_group(self, item, data):
-        item.takeChildren()
-        profile = data["profile"]
-        dbname = data["dbname"]
-        schema = data["schema"]
-        
-        engine = self.db_engines[(profile["id"], dbname)]
-        tables = engine.get_tables(schema)
-        for table in tables:
-            t_item = QTreeWidgetItem(item)
-            t_item.setText(0, table)
-            t_item.setData(0, Qt.ItemDataRole.UserRole, {
-                "type": NODE_TYPE_TABLE,
-                "profile": profile,
-                "dbname": dbname,
-                "schema": schema,
-                "table_name": table
-            })
-
-    def expand_view_group(self, item, data):
-        item.takeChildren()
-        profile = data["profile"]
-        dbname = data["dbname"]
-        schema = data["schema"]
-        
-        engine = self.db_engines[(profile["id"], dbname)]
-        views = engine.get_views(schema)
-        for view in views:
-            v_item = QTreeWidgetItem(item)
-            v_item.setText(0, view)
-            v_item.setData(0, Qt.ItemDataRole.UserRole, {
-                "type": NODE_TYPE_VIEW,
-                "profile": profile,
-                "dbname": dbname,
-                "schema": schema,
-                "table_name": view
-            })
-
-    def expand_function_group(self, item, data):
-        item.takeChildren()
-        profile = data["profile"]
-        dbname = data["dbname"]
-        schema = data["schema"]
-        
-        engine = self.db_engines[(profile["id"], dbname)]
-        funcs = engine.get_functions(schema)
-        for func in funcs:
-            f_item = QTreeWidgetItem(item)
-            f_item.setText(0, func)
-            f_item.setData(0, Qt.ItemDataRole.UserRole, {
-                "type": NODE_TYPE_FUNCTION,
-                "profile": profile,
-                "dbname": dbname,
-                "schema": schema,
-                "func_name": func
-            })
 
     def on_item_double_clicked(self, item, column):
         data = item.data(0, Qt.ItemDataRole.UserRole)
@@ -263,9 +198,74 @@ class DbTreeWidget(DbTreeUI):
                     sql_def = engine.get_function_definition(schema, func_name)
                     self.open_query_editor_signal.emit(engine, dbname, schema, sql_def)
                 except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Could not retrieve function definition:\n{str(e)}")
+                    show_exception_dialog(self, "Error", f"Could not retrieve function definition:\n{str(e)}")
                 finally:
                     self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+
+    def on_item_clicked(self, item, column):
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not data:
+            return
+            
+        node_type = data.get("type")
+        if node_type in (NODE_TYPE_TABLE_GROUP, NODE_TYPE_VIEW_GROUP, NODE_TYPE_FUNCTION_GROUP):
+            profile = data["profile"]
+            dbname = data["dbname"]
+            schema = data.get("schema", "public")
+            group_name = item.text(0)
+            
+            engine = self.db_engines.get((profile["id"], dbname))
+            if not engine:
+                return
+                
+            self.setCursor(QCursor(Qt.CursorShape.WaitCursor))
+            try:
+                children = []
+                if node_type == NODE_TYPE_TABLE_GROUP:
+                    tables = engine.get_tables(schema)
+                    for t in tables:
+                        children.append({
+                            "name": t,
+                            "data": {
+                                "type": NODE_TYPE_TABLE,
+                                "profile": profile,
+                                "dbname": dbname,
+                                "schema": schema,
+                                "table_name": t
+                            }
+                        })
+                elif node_type == NODE_TYPE_VIEW_GROUP:
+                    views = engine.get_views(schema)
+                    for v in views:
+                        children.append({
+                            "name": v,
+                            "data": {
+                                "type": NODE_TYPE_VIEW,
+                                "profile": profile,
+                                "dbname": dbname,
+                                "schema": schema,
+                                "table_name": v
+                            }
+                        })
+                elif node_type == NODE_TYPE_FUNCTION_GROUP:
+                    funcs = engine.get_functions(schema)
+                    for f in funcs:
+                        children.append({
+                            "name": f,
+                            "data": {
+                                "type": NODE_TYPE_FUNCTION,
+                                "profile": profile,
+                                "dbname": dbname,
+                                "schema": schema,
+                                "func_name": f
+                            }
+                        })
+                
+                self.open_object_tab_signal.emit(engine, dbname, schema, group_name, children)
+            except Exception as e:
+                show_exception_dialog(self, "Error", f"Failed to retrieve objects list:\n{str(e)}")
+            finally:
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 
     def show_context_menu(self, position):
         item = self.itemAt(position)
@@ -325,12 +325,36 @@ class DbTreeWidget(DbTreeUI):
         elif node_type in (NODE_TYPE_TABLE, NODE_TYPE_VIEW):
             open_data_action = menu.addAction("Open Table Data")
             query_action = menu.addAction("New Query Editor")
+            ddl_action = menu.addAction("Show DDL")
             
             action = menu.exec(self.mapToGlobal(position))
             if action == open_data_action:
                 self.on_item_double_clicked(item, 0)
             elif action == query_action:
                 self.open_query_for_node(data)
+            elif action == ddl_action:
+                self.show_ddl_for_node(data)
+
+    def show_ddl_for_node(self, data):
+        node_type = data.get("type")
+        profile = data["profile"]
+        dbname = data["dbname"]
+        schema = data.get("schema", "public")
+        table_name = data.get("table_name")
+        
+        engine = self.db_engines.get((profile["id"], dbname))
+        if engine:
+            self.setCursor(QCursor(Qt.CursorShape.WaitCursor))
+            try:
+                if node_type == NODE_TYPE_TABLE:
+                    sql_def = engine.get_table_definition(schema, table_name)
+                else:  # VIEW
+                    sql_def = engine.get_view_definition(schema, table_name)
+                self.open_query_editor_signal.emit(engine, dbname, schema, sql_def)
+            except Exception as e:
+                show_exception_dialog(self, "Error", f"Could not retrieve definition:\n{str(e)}")
+            finally:
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 
     def open_query_for_node(self, data):
         profile = data["profile"]
@@ -345,7 +369,8 @@ class DbTreeWidget(DbTreeUI):
                 database=dbname,
                 username=profile["username"],
                 password=profile["password"],
-                sslmode=profile["sslmode"]
+                sslmode=profile.get("sslmode", "prefer"),
+                db_type=profile.get("db_type", "PostgreSQL")
             )
             engine.connect()
             self.db_engines[(profile["id"], dbname)] = engine

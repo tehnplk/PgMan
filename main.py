@@ -2,15 +2,17 @@ import sys
 import time
 from PyQt6.QtWidgets import QApplication, QSplashScreen
 from PyQt6.QtGui import QPixmap, QColor, QFont
-from PyQt6.QtCore import Qt
-from src.ui.main_window_logic import MainWindow
-from src.ui.stylesheets import DARK_THEME_QSS, get_resource_path
+from PyQt6.QtCore import Qt, QSettings
+from src.ui.MainWindowLogic import MainWindow
+from src.ui.Stylesheets import get_theme_qss, get_resource_path
 
 def main():
     app = QApplication(sys.argv)
     
-    # Apply our custom dark QSS theme
-    app.setStyleSheet(DARK_THEME_QSS)
+    # Load and apply theme from settings (default to dark)
+    settings = QSettings("PgMan", "ThemeSettings")
+    theme = settings.value("theme", "dark")
+    app.setStyleSheet(get_theme_qss(theme))
 
     # 1. Initialize Splash Screen
     pixmap = QPixmap(get_resource_path("resources/app_icon.png"))

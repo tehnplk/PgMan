@@ -1,12 +1,14 @@
 from PyQt6.QtWidgets import QMessageBox, QDialog
 from PyQt6.QtCore import Qt
 
-from src.ui.main_window_ui import MainWindowUI
-from src.ui.connection_dlg_logic import ConnectionDialog
-from src.ui.query_editor_logic import QueryEditorTab
-from src.ui.table_viewer_logic import TableViewerTab
-from src.db_engine import DbEngine
-import src.config as config
+from src.ui.MainWindowUI import MainWindowUI
+from src.ui.ConnectionDlgLogic import ConnectionDialog
+from src.ui.QueryEditorLogic import QueryEditorTab
+from src.ui.TableViewerLogic import TableViewerTab
+from src.ui.ObjectTabLogic import ObjectTab
+from src.DbEngine import DbEngine
+import src.Config as config
+from src.ui.UiUtils import show_exception_dialog
 
 class MainWindow(MainWindowUI):
     def __init__(self):
@@ -15,10 +17,21 @@ class MainWindow(MainWindowUI):
         # Connect visual buttons to handlers
         self.new_conn_btn.clicked.connect(self.open_new_connection_dialog)
         self.new_query_btn.clicked.connect(self.open_new_query_editor)
+        self.theme_btn.clicked.connect(self.toggle_theme)
+
+        # Initialize theme button label from settings
+        from PyQt6.QtCore import QSettings
+        settings = QSettings("PgMan", "ThemeSettings")
+        theme = settings.value("theme", "dark")
+        if theme == "dark":
+            self.theme_btn.setText("🌙 Dark Mode")
+        else:
+            self.theme_btn.setText("☀ Light Mode")
         
         # Connect tree signals
         self.tree.open_query_editor_signal.connect(self.add_query_tab)
         self.tree.open_table_viewer_signal.connect(self.add_table_tab)
+        self.tree.open_object_tab_signal.connect(self.add_or_update_object_tab)
         self.tabs.tabCloseRequested.connect(self.close_tab)
 
     def open_new_connection_dialog(self):
@@ -58,12 +71,13 @@ class MainWindow(MainWindowUI):
                     database=dbname,
                     username=profile["username"],
                     password=profile["password"],
-                    sslmode=profile["sslmode"]
+                    sslmode=profile.get("sslmode", "prefer"),
+                    db_type=profile.get("db_type", "PostgreSQL")
                 )
                 engine.connect()
                 self.tree.db_engines[engine_key] = engine
             except Exception as e:
-                QMessageBox.critical(self, "Connection Error", f"Failed to connect to database '{dbname}':\n{str(e)}")
+                show_exception_dialog(self, "Connection Error", f"Failed to connect to database '{dbname}':\n{str(e)}")
                 return
 
         self.add_query_tab(engine, dbname, schema, "")
@@ -72,9 +86,15 @@ class MainWindow(MainWindowUI):
         tab = QueryEditorTab(db_engine, dbname, schema, self)
         if initial_sql:
             tab.editor.setPlainText(initial_sql)
+            from PyQt6.QtWidgets import QApplication
+            QApplication.clipboard().setText(initial_sql)
+            status_msg = "DDL/SQL definition copied to clipboard."
+        else:
+            status_msg = f"Opened query tab for database: {dbname}"
+            
         index = self.tabs.addTab(tab, f"Query [{dbname}]")
         self.tabs.setCurrentIndex(index)
-        self.status.showMessage(f"Opened query tab for database: {dbname}")
+        self.status.showMessage(status_msg)
 
     def add_table_tab(self, db_engine, dbname, schema, table_name):
         for idx in range(self.tabs.count()):
@@ -88,6 +108,32 @@ class MainWindow(MainWindowUI):
         index = self.tabs.addTab(tab, f"{schema}.{table_name}")
         self.tabs.setCurrentIndex(index)
         self.status.showMessage(f"Opened table viewer for: {schema}.{table_name}")
+
+    def add_or_update_object_tab(self, db_engine, dbname, schema, group_name, children):
+        # Find if tab named "Object" already exists
+        object_tab_idx = -1
+        existing_tab = None
+        for idx in range(self.tabs.count()):
+            if self.tabs.tabText(idx) == "Object":
+                object_tab_idx = idx
+                existing_tab = self.tabs.widget(idx)
+                break
+                
+        if existing_tab and isinstance(existing_tab, ObjectTab):
+            existing_tab.update_data(db_engine, dbname, schema, group_name, children)
+            self.tabs.setCurrentIndex(object_tab_idx)
+        else:
+            tab = ObjectTab(db_engine, dbname, schema, group_name, children, self)
+            tab.open_table_signal.connect(self.add_table_tab)
+            tab.open_query_signal.connect(self.add_query_tab)
+            if object_tab_idx != -1:
+                self.tabs.insertTab(object_tab_idx, tab, "Object")
+                self.tabs.removeTab(object_tab_idx + 1)
+                self.tabs.setCurrentIndex(object_tab_idx)
+            else:
+                index = self.tabs.addTab(tab, "Object")
+                self.tabs.setCurrentIndex(index)
+        self.status.showMessage(f"Listing {group_name} in {schema} under 'Object' tab")
 
     def close_tab(self, index):
         widget = self.tabs.widget(index)
@@ -105,3 +151,26 @@ class MainWindow(MainWindowUI):
             
             widget.deleteLater()
         self.tabs.removeTab(index)
+
+    def toggle_theme(self):
+        from PyQt6.QtCore import QSettings
+        from PyQt6.QtWidgets import QApplication
+        from src.ui.Stylesheets import get_theme_qss
+        
+        settings = QSettings("PgMan", "ThemeSettings")
+        current_theme = settings.value("theme", "dark")
+        
+        # Toggle theme value
+        new_theme = "light" if current_theme == "dark" else "dark"
+        settings.setValue("theme", new_theme)
+        
+        # Apply the style globally
+        QApplication.instance().setStyleSheet(get_theme_qss(new_theme))
+        
+        # Update theme button label
+        if new_theme == "dark":
+            self.theme_btn.setText("🌙 Dark Mode")
+        else:
+            self.theme_btn.setText("☀ Light Mode")
+            
+        self.status.showMessage(f"Switched to {new_theme} mode.")

@@ -5,8 +5,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 
-from src.ui.db_tree_logic import DbTreeWidget
-from src.ui.stylesheets import get_resource_path
+from src.ui.DbTreeLogic import DbTreeWidget
+from src.ui.Stylesheets import get_resource_path
 
 class MainWindowUI(QMainWindow):
     def __init__(self):
@@ -29,6 +29,16 @@ class MainWindowUI(QMainWindow):
 
         self.new_query_btn = QPushButton("📄 New Query")
         self.toolbar.addWidget(self.new_query_btn)
+
+        # Expanding spacer to align theme toggle to the right
+        from PyQt6.QtWidgets import QWidget
+        right_spacer = QWidget()
+        right_spacer.setSizePolicy(right_spacer.sizePolicy().Policy.Expanding, right_spacer.sizePolicy().Policy.Preferred)
+        self.toolbar.addWidget(right_spacer)
+
+        # Theme toggle button
+        self.theme_btn = QPushButton("🌙 Dark Mode")
+        self.toolbar.addWidget(self.theme_btn)
 
         # 2. Main Central Splitter
         main_splitter = QSplitter(Qt.Orientation.Horizontal)

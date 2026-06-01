@@ -34,6 +34,9 @@ class TableViewerUI(QWidget):
         self.refresh_btn = QPushButton("↺ Refresh")
         self.toolbar.addWidget(self.refresh_btn)
 
+        self.ddl_btn = QPushButton("📄 DDL")
+        self.toolbar.addWidget(self.ddl_btn)
+
         # Spacer in toolbar
         spacer = QWidget()
         spacer.setSizePolicy(spacer.sizePolicy().Policy.Expanding, spacer.sizePolicy().Policy.Preferred)
