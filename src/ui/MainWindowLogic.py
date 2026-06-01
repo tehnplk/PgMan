@@ -109,7 +109,7 @@ class MainWindow(MainWindowUI):
         self.tabs.setCurrentIndex(index)
         self.status.showMessage(f"Opened table viewer for: {schema}.{table_name}")
 
-    def add_or_update_object_tab(self, db_engine, dbname, schema, group_name, children):
+    def add_or_update_object_tab(self, db_engine, dbname, schema, group_name, profile):
         # Find if tab named "Object" already exists
         object_tab_idx = -1
         existing_tab = None
@@ -120,10 +120,10 @@ class MainWindow(MainWindowUI):
                 break
                 
         if existing_tab and isinstance(existing_tab, ObjectTab):
-            existing_tab.update_data(db_engine, dbname, schema, group_name, children)
+            existing_tab.update_data(db_engine, dbname, schema, group_name, profile)
             self.tabs.setCurrentIndex(object_tab_idx)
         else:
-            tab = ObjectTab(db_engine, dbname, schema, group_name, children, self)
+            tab = ObjectTab(db_engine, dbname, schema, group_name, profile, self)
             tab.open_table_signal.connect(self.add_table_tab)
             tab.open_query_signal.connect(self.add_query_tab)
             if object_tab_idx != -1:

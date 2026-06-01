@@ -248,54 +248,7 @@ class DbTreeWidget(DbTreeUI):
             if not engine:
                 return
                 
-            self.setCursor(QCursor(Qt.CursorShape.WaitCursor))
-            try:
-                children = []
-                if node_type == NODE_TYPE_TABLE_GROUP:
-                    tables = engine.get_tables(schema)
-                    for t in tables:
-                        children.append({
-                            "name": t,
-                            "data": {
-                                "type": NODE_TYPE_TABLE,
-                                "profile": profile,
-                                "dbname": dbname,
-                                "schema": schema,
-                                "table_name": t
-                            }
-                        })
-                elif node_type == NODE_TYPE_VIEW_GROUP:
-                    views = engine.get_views(schema)
-                    for v in views:
-                        children.append({
-                            "name": v,
-                            "data": {
-                                "type": NODE_TYPE_VIEW,
-                                "profile": profile,
-                                "dbname": dbname,
-                                "schema": schema,
-                                "table_name": v
-                            }
-                        })
-                elif node_type == NODE_TYPE_FUNCTION_GROUP:
-                    funcs = engine.get_functions(schema)
-                    for f in funcs:
-                        children.append({
-                            "name": f,
-                            "data": {
-                                "type": NODE_TYPE_FUNCTION,
-                                "profile": profile,
-                                "dbname": dbname,
-                                "schema": schema,
-                                "func_name": f
-                            }
-                        })
-                
-                self.open_object_tab_signal.emit(engine, dbname, schema, group_name, children)
-            except Exception as e:
-                show_exception_dialog(self, "Error", f"Failed to retrieve objects list:\n{str(e)}")
-            finally:
-                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+            self.open_object_tab_signal.emit(engine, dbname, schema, group_name, profile)
 
     def show_context_menu(self, position):
         item = self.itemAt(position)

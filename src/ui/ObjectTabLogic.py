@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QTableWidgetItem, QListWidgetItem, QMessageBox
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRectF
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRectF, QThread
 from PyQt6.QtGui import QCursor, QPixmap, QPainter, QFont, QIcon, QImage
 import re
 
@@ -109,18 +109,79 @@ def emoji_to_icon(emoji):
         icon.addPixmap(pixmap)
     return icon
 
+class ObjectLoaderWorker(QThread):
+    finished_signal = pyqtSignal(list, list, str)  # (children, tables_detailed, error_message)
+
+    def __init__(self, db_engine, dbname, schema, group_name, profile):
+        super().__init__()
+        self.db_engine = db_engine
+        self.dbname = dbname
+        self.schema = schema
+        self.group_name = group_name
+        self.profile = profile
+
+    def run(self):
+        try:
+            children = []
+            tables_detailed = []
+            
+            if self.group_name == "Tables":
+                # Fetch detailed list (with row counts and sizes)
+                tables_detailed = self.db_engine.get_tables_detailed(self.schema)
+                for t in tables_detailed:
+                    name = t["name"]
+                    children.append({
+                        "name": name,
+                        "data": {
+                            "type": "table",
+                            "profile": self.profile,
+                            "dbname": self.dbname,
+                            "schema": self.schema,
+                            "table_name": name
+                        }
+                    })
+            elif self.group_name == "Views":
+                views = self.db_engine.get_views(self.schema)
+                for v in views:
+                    children.append({
+                        "name": v,
+                        "data": {
+                            "type": "view",
+                            "profile": self.profile,
+                            "dbname": self.dbname,
+                            "schema": self.schema,
+                            "table_name": v
+                        }
+                    })
+            elif self.group_name == "Functions":
+                funcs = self.db_engine.get_functions(self.schema)
+                for f in funcs:
+                    children.append({
+                        "name": f,
+                        "data": {
+                            "type": "function",
+                            "profile": self.profile,
+                            "dbname": self.dbname,
+                            "schema": self.schema,
+                            "func_name": f
+                        }
+                    })
+            
+            self.finished_signal.emit(children, tables_detailed, "")
+        except Exception as e:
+            self.finished_signal.emit([], [], str(e))
+
 class ObjectTab(ObjectTabUI):
     open_table_signal = pyqtSignal(object, str, str, str)  # (db_engine, dbname, schema, table_name)
     open_query_signal = pyqtSignal(object, str, str, str)  # (db_engine, dbname, schema, initial_sql)
 
-    def __init__(self, db_engine, dbname, schema, group_name, children, parent=None):
+    def __init__(self, db_engine, dbname, schema, group_name, profile, parent=None):
         super().__init__(dbname, schema, group_name, parent)
         self.db_engine = db_engine
-        self.children = children
-        
-        self.profile = None
-        if children:
-            self.profile = children[0]["data"].get("profile")
+        self.profile = profile
+        self.children = []
+        self.tables_detailed = []
+        self.loader_worker = None
         
         # Cache emoji icon
         emoji_map = {
@@ -130,8 +191,6 @@ class ObjectTab(ObjectTabUI):
         }
         self.emoji = emoji_map.get(self.group_name, "📄")
         self.cached_icon = emoji_to_icon(self.emoji)
-        
-        self.populate_data()
         
         # Load and apply saved view style
         from PyQt6.QtCore import QSettings
@@ -155,20 +214,69 @@ class ObjectTab(ObjectTabUI):
         self.btn_list.clicked.connect(self.set_view_list)
         self.btn_grid.clicked.connect(self.set_view_grid)
         self.btn_refresh.clicked.connect(self.refresh_data)
+        
+        self.start_loading()
+
+    def start_loading(self):
+        # Disable refresh and clear UI elements
+        self.btn_refresh.setEnabled(False)
+        self.status_lbl.setText("Loading objects...")
+        
+        # Clear UI components
+        self.table_widget.setUpdatesEnabled(False)
+        self.list_widget.setUpdatesEnabled(False)
+        self.grid_widget.setUpdatesEnabled(False)
+        self.table_widget.setRowCount(0)
+        self.list_widget.clear()
+        self.grid_widget.clear()
+        self.table_widget.setUpdatesEnabled(True)
+        self.list_widget.setUpdatesEnabled(True)
+        self.grid_widget.setUpdatesEnabled(True)
+        
+        # Stop existing worker if running
+        if self.loader_worker and self.loader_worker.isRunning():
+            try:
+                self.loader_worker.disconnect()
+                self.loader_worker.terminate()
+            except Exception:
+                pass
+            
+        # Start background load
+        self.loader_worker = ObjectLoaderWorker(self.db_engine, self.dbname, self.schema, self.group_name, self.profile)
+        self.loader_worker.finished_signal.connect(self.on_loading_finished)
+        self.loader_worker.start()
+
+    def on_loading_finished(self, children, tables_detailed, error_msg):
+        self.btn_refresh.setEnabled(True)
+        
+        if error_msg:
+            self.status_lbl.setText("Error loading objects.")
+            show_exception_dialog(self, "Load Error", f"Failed to retrieve objects list:\n{error_msg}")
+            return
+            
+        self.children = children
+        self.tables_detailed = tables_detailed
+        
+        self.populate_data()
+        
+        # Apply search filter if active
+        self.filter_objects()
 
     def populate_data(self):
         # Build lookup of child user data by name
         children_lookup = {child["name"]: child["data"] for child in self.children}
 
+        # Disable updates for widgets to prevent multiple repaints and speed up loading drastically
+        self.table_widget.setUpdatesEnabled(False)
+        self.list_widget.setUpdatesEnabled(False)
+        self.grid_widget.setUpdatesEnabled(False)
+        
         # 1. Populate Table (Detail view)
         self.table_widget.setRowCount(0)
         
         if self.group_name == "Tables":
-            # Fetch detailed table list (with rows and size)
-            tables_detailed = self.db_engine.get_tables_detailed(self.schema)
-            self.table_widget.setRowCount(len(tables_detailed))
-            
-            for idx, table in enumerate(tables_detailed):
+            self.table_widget.setRowCount(len(self.tables_detailed))
+            for idx, table in enumerate(self.tables_detailed):
                 name = table["name"]
                 rows_count = table["rows"]
                 size_str = table["size"]
@@ -238,6 +346,11 @@ class ObjectTab(ObjectTabUI):
             grid_item.setData(Qt.ItemDataRole.UserRole, child_data)
             self.grid_widget.addItem(grid_item)
             
+        # Re-enable updates
+        self.table_widget.setUpdatesEnabled(True)
+        self.list_widget.setUpdatesEnabled(True)
+        self.grid_widget.setUpdatesEnabled(True)
+        
         self.status_lbl.setText(f"Total: {len(self.children)} {self.group_name.lower()}")
 
     def set_view_detail(self):
@@ -330,15 +443,12 @@ class ObjectTab(ObjectTabUI):
             finally:
                 self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 
-    def update_data(self, db_engine, dbname, schema, group_name, children):
+    def update_data(self, db_engine, dbname, schema, group_name, profile):
         self.db_engine = db_engine
         self.dbname = dbname
         self.schema = schema
         self.group_name = group_name
-        self.children = children
-        self.profile = None
-        if children:
-            self.profile = children[0]["data"].get("profile")
+        self.profile = profile
         
         emoji_map = {
             "Tables": "📊",
@@ -354,63 +464,8 @@ class ObjectTab(ObjectTabUI):
         self.search_input.clear()
         self.search_input.blockSignals(False)
         
-        self.populate_data()
+        self.start_loading()
 
     def refresh_data(self):
-        self.setCursor(QCursor(Qt.CursorShape.WaitCursor))
-        try:
-            # Clear metadata cache in DbEngine
-            self.db_engine.clear_cache()
-            
-            # Fetch fresh metadata list
-            children = []
-            if self.group_name == "Tables":
-                tables = self.db_engine.get_tables(self.schema)
-                for t in tables:
-                    children.append({
-                        "name": t,
-                        "data": {
-                            "type": "table",
-                            "profile": self.profile,
-                            "dbname": self.dbname,
-                            "schema": self.schema,
-                            "table_name": t
-                        }
-                    })
-            elif self.group_name == "Views":
-                views = self.db_engine.get_views(self.schema)
-                for v in views:
-                    children.append({
-                        "name": v,
-                        "data": {
-                            "type": "view",
-                            "profile": self.profile,
-                            "dbname": self.dbname,
-                            "schema": self.schema,
-                            "table_name": v
-                        }
-                    })
-            elif self.group_name == "Functions":
-                funcs = self.db_engine.get_functions(self.schema)
-                for f in funcs:
-                    children.append({
-                        "name": f,
-                        "data": {
-                            "type": "function",
-                            "profile": self.profile,
-                            "dbname": self.dbname,
-                            "schema": self.schema,
-                            "func_name": f
-                        }
-                    })
-            
-            self.children = children
-            self.populate_data()
-            
-            # Keep search filter applied
-            self.filter_objects()
-            
-        except Exception as e:
-            show_exception_dialog(self, "Error", f"Failed to refresh data:\n{str(e)}")
-        finally:
-            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        self.db_engine.clear_cache()
+        self.start_loading()
