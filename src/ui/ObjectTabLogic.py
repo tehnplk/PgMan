@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QTableWidgetItem, QListWidgetItem, QMessageBox
+from PyQt6.QtWidgets import QTableWidgetItem, QListWidgetItem, QMessageBox, QMenu, QTableWidget
 from PyQt6.QtCore import Qt, pyqtSignal, QSize, QRectF, QThread
 from PyQt6.QtGui import QCursor, QPixmap, QPainter, QFont, QIcon, QImage
 import re
@@ -209,17 +209,19 @@ class ObjectTab(ObjectTabUI):
         self.list_widget.itemDoubleClicked.connect(self.on_list_item_double_clicked)
         self.grid_widget.itemDoubleClicked.connect(self.on_list_item_double_clicked)
         
+        self.table_widget.customContextMenuRequested.connect(self.show_context_menu)
+        self.list_widget.customContextMenuRequested.connect(self.show_context_menu)
+        self.grid_widget.customContextMenuRequested.connect(self.show_context_menu)
+        
         # View switches
         self.btn_detail.clicked.connect(self.set_view_detail)
         self.btn_list.clicked.connect(self.set_view_list)
         self.btn_grid.clicked.connect(self.set_view_grid)
-        self.btn_refresh.clicked.connect(self.refresh_data)
         
         self.start_loading()
 
     def start_loading(self):
-        # Disable refresh and clear UI elements
-        self.btn_refresh.setEnabled(False)
+        # Clear UI elements and show loading message
         self.status_lbl.setText("Loading objects...")
         
         # Clear UI components
@@ -247,8 +249,6 @@ class ObjectTab(ObjectTabUI):
         self.loader_worker.start()
 
     def on_loading_finished(self, children, tables_detailed, error_msg):
-        self.btn_refresh.setEnabled(True)
-        
         if error_msg:
             self.status_lbl.setText("Error loading objects.")
             show_exception_dialog(self, "Load Error", f"Failed to retrieve objects list:\n{error_msg}")
@@ -469,3 +469,67 @@ class ObjectTab(ObjectTabUI):
     def refresh_data(self):
         self.db_engine.clear_cache()
         self.start_loading()
+
+    def show_context_menu(self, position):
+        sender = self.sender()
+        if not sender:
+            return
+            
+        data = None
+        if isinstance(sender, QTableWidget):
+            item = sender.itemAt(position)
+            if item:
+                row = item.row()
+                name_item = sender.item(row, 0)
+                if name_item:
+                    data = name_item.data(Qt.ItemDataRole.UserRole)
+        else:
+            item = sender.itemAt(position)
+            if item:
+                data = item.data(Qt.ItemDataRole.UserRole)
+                
+        menu = QMenu(self)
+        
+        open_action = None
+        ddl_action = None
+        
+        if data:
+            node_type = data.get("type")
+            if node_type == "table":
+                open_action = menu.addAction("Open Table")
+                ddl_action = menu.addAction("Show DDL")
+                menu.addSeparator()
+            elif node_type == "view":
+                open_action = menu.addAction("Open View")
+                ddl_action = menu.addAction("Show DDL")
+                menu.addSeparator()
+            elif node_type == "function":
+                open_action = menu.addAction("Open Function Definition")
+                menu.addSeparator()
+                
+        refresh_action = menu.addAction("Refresh")
+        
+        action = menu.exec(sender.mapToGlobal(position))
+        if action is not None:
+            if action == open_action:
+                self.open_object_with_data(data)
+            elif action == ddl_action:
+                self.show_ddl_for_object(data)
+            elif action == refresh_action:
+                self.refresh_data()
+
+    def show_ddl_for_object(self, data):
+        node_type = data.get("type")
+        table_name = data.get("table_name")
+        
+        self.setCursor(QCursor(Qt.CursorShape.WaitCursor))
+        try:
+            if node_type == "table":
+                sql_def = self.db_engine.get_table_definition(self.schema, table_name)
+            else:  # view
+                sql_def = self.db_engine.get_view_definition(self.schema, table_name)
+            self.open_query_signal.emit(self.db_engine, self.dbname, self.schema, sql_def)
+        except Exception as e:
+            show_exception_dialog(self, "Error", f"Could not retrieve definition:\n{str(e)}")
+        finally:
+            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))

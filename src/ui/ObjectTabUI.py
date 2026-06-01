@@ -53,10 +53,6 @@ class ObjectTabUI(QWidget):
         top_bar.addWidget(self.btn_detail)
         top_bar.addWidget(self.btn_list)
         top_bar.addWidget(self.btn_grid)
-        
-        self.btn_refresh = QPushButton("🔄 Refresh")
-        top_bar.addWidget(self.btn_refresh)
-
         layout.addLayout(top_bar)
 
         # Central Stacked Widget
@@ -77,8 +73,7 @@ class ObjectTabUI(QWidget):
         self.table_widget.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table_widget.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table_widget.verticalHeader().setVisible(False)
-        self.table_widget.setAlternatingRowColors(True)
-        self.table_widget.setShowGrid(True)
+        self.table_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.stack.addWidget(self.table_widget)
 
         # 2. List View: QListWidget in ListMode
@@ -89,6 +84,7 @@ class ObjectTabUI(QWidget):
         self.list_widget.setIconSize(QSize(20, 20))
         self.list_widget.setSpacing(2)
         self.list_widget.setWrapping(False)
+        self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.stack.addWidget(self.list_widget)
 
         # 3. Grid View: QListWidget flowing horizontally in ListMode (small icons, left-aligned)
@@ -101,6 +97,7 @@ class ObjectTabUI(QWidget):
         self.grid_widget.setIconSize(QSize(20, 20))
         self.grid_widget.setGridSize(QSize(220, 30))
         self.grid_widget.setSpacing(6)
+        self.grid_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.stack.addWidget(self.grid_widget)
         
         layout.addWidget(self.stack)

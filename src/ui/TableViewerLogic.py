@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QMessageBox, QMenu
 from PyQt6.QtCore import Qt, QAbstractTableModel, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 from src.ui.TableViewerUI import TableViewerUI
@@ -218,6 +218,9 @@ class TableViewerTab(TableViewerUI):
         self.last_page_btn.clicked.connect(self.go_last_page)
         
         self.limit_combo.currentTextChanged.connect(self.on_limit_changed)
+        
+        self.table_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table_view.customContextMenuRequested.connect(self.show_context_menu)
 
     def set_loading_state(self, is_loading):
         self.add_btn.setEnabled(not is_loading)
@@ -377,3 +380,57 @@ class TableViewerTab(TableViewerUI):
     def go_last_page(self):
         self.current_page = self.total_pages
         self.load_data()
+
+    def show_context_menu(self, position):
+        menu = QMenu(self)
+        
+        index = self.table_view.indexAt(position)
+        if index.isValid():
+            # If the row is not already selected, select it to make operations intuitive
+            if not self.table_view.selectionModel().isRowSelected(index.row()):
+                self.table_view.selectRow(index.row())
+                
+        # 1. Add Row
+        add_action = menu.addAction("➕ Add Row")
+        
+        # 2. Delete Row(s)
+        selected_rows = self.table_view.selectionModel().selectedRows()
+        delete_action = None
+        if selected_rows:
+            delete_action = menu.addAction("❌ Delete Row(s)")
+            
+        menu.addSeparator()
+        
+        # 3. Set Cell to NULL (if clicking an active, non-null cell)
+        null_action = None
+        if index.isValid() and hasattr(self, "model") and index.row() not in self.model.deleted_row_indices:
+            row = index.row()
+            col = index.column()
+            val = self.model.rows_data[row][col]
+            if val is not None:
+                null_action = menu.addAction("Set Cell to NULL")
+                menu.addSeparator()
+                
+        # 4. Commit Changes
+        commit_action = menu.addAction("✔ Commit Changes")
+        
+        # 5. Refresh
+        refresh_action = menu.addAction("↺ Refresh")
+        
+        # 6. Show DDL
+        ddl_action = menu.addAction("📄 Show DDL")
+        
+        action = menu.exec(self.table_view.mapToGlobal(position))
+        if action is not None:
+            if action == add_action:
+                self.add_row()
+            elif action == delete_action:
+                self.delete_row()
+            elif action == null_action:
+                self.model.setData(index, "[NULL]")
+            elif action == commit_action:
+                self.commit_changes()
+            elif action == refresh_action:
+                self.load_data()
+            elif action == ddl_action:
+                self.show_ddl()
