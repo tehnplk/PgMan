@@ -1,11 +1,11 @@
-from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QMenu, QMessageBox
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QTreeWidgetItem, QMenu, QMessageBox, QDialog
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCursor
 from src.db_engine import DbEngine
-from src.ui.connection_dlg import ConnectionDialog
+from src.ui.connection_dlg_logic import ConnectionDialog
+from src.ui.db_tree_ui import DbTreeUI
 import src.config as config
 
-# Define custom QTreeWidgetItem classes or use setData to differentiate node types
 NODE_TYPE_CONNECTION = "connection"
 NODE_TYPE_DATABASE_LIST = "db_list"
 NODE_TYPE_DATABASE = "database"
@@ -17,25 +17,16 @@ NODE_TYPE_TABLE = "table"
 NODE_TYPE_VIEW = "view"
 NODE_TYPE_FUNCTION = "function"
 
-class DbTreeWidget(QTreeWidget):
-    # Signals to communicate actions back to main window
-    open_query_editor_signal = pyqtSignal(object, str, str, str)  # (db_engine, database_name, schema_name, initial_sql)
-    open_table_viewer_signal = pyqtSignal(object, str, str, str) # (db_engine, database_name, schema_name, table_name)
-    connection_changed_signal = pyqtSignal()
-
+class DbTreeWidget(DbTreeUI):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setHeaderLabel("Database Explorer")
-        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        
         self.customContextMenuRequested.connect(self.show_context_menu)
         self.itemExpanded.connect(self.on_item_expanded)
         self.itemDoubleClicked.connect(self.on_item_double_clicked)
-        self.setIndentation(12)  # Reduce indentation for compact hierarchy
         
-        # Keep track of active DB engines by connection ID and database name
-        # Format: {(connection_id, dbname): DbEngine}
+        # Cache active DB engines by connection ID and database name
         self.db_engines = {}
-        
         self.load_profiles()
 
     def load_profiles(self):
@@ -51,7 +42,7 @@ class DbTreeWidget(QTreeWidget):
                 "profile": p,
                 "loaded": False
             })
-            # Add a dummy child to make it expandable
+            # Add dummy child
             dummy = QTreeWidgetItem(item)
             dummy.setText(0, "Loading...")
 
@@ -85,10 +76,8 @@ class DbTreeWidget(QTreeWidget):
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 
     def expand_connection(self, item, profile):
-        # Remove dummy child
         item.takeChildren()
 
-        # Connect to default database first to list databases
         engine = DbEngine(
             host=profile["host"],
             port=profile["port"],
@@ -98,8 +87,6 @@ class DbTreeWidget(QTreeWidget):
             sslmode=profile["sslmode"]
         )
         engine.connect()
-        
-        # Save engine for future database listing
         self.db_engines[(profile["id"], profile["database"])] = engine
         
         databases = engine.get_databases()
@@ -112,17 +99,14 @@ class DbTreeWidget(QTreeWidget):
                 "dbname": db,
                 "loaded": False
             })
-            # Add dummy child
             dummy = QTreeWidgetItem(db_item)
             dummy.setText(0, "Loading...")
 
     def expand_database(self, item, data):
         item.takeChildren()
-        
         profile = data["profile"]
         dbname = data["dbname"]
         
-        # Get or create engine for this database
         engine_key = (profile["id"], dbname)
         if engine_key in self.db_engines:
             engine = self.db_engines[engine_key]
@@ -154,12 +138,10 @@ class DbTreeWidget(QTreeWidget):
 
     def expand_schema(self, item, data):
         item.takeChildren()
-        
         profile = data["profile"]
         dbname = data["dbname"]
         schema = data["schema"]
         
-        # Create Table and View group folders
         table_group = QTreeWidgetItem(item)
         table_group.setText(0, "Tables")
         table_group.setData(0, Qt.ItemDataRole.UserRole, {
@@ -198,14 +180,12 @@ class DbTreeWidget(QTreeWidget):
 
     def expand_table_group(self, item, data):
         item.takeChildren()
-        
         profile = data["profile"]
         dbname = data["dbname"]
         schema = data["schema"]
         
         engine = self.db_engines[(profile["id"], dbname)]
         tables = engine.get_tables(schema)
-        
         for table in tables:
             t_item = QTreeWidgetItem(item)
             t_item.setText(0, table)
@@ -219,14 +199,12 @@ class DbTreeWidget(QTreeWidget):
 
     def expand_view_group(self, item, data):
         item.takeChildren()
-        
         profile = data["profile"]
         dbname = data["dbname"]
         schema = data["schema"]
         
         engine = self.db_engines[(profile["id"], dbname)]
         views = engine.get_views(schema)
-        
         for view in views:
             v_item = QTreeWidgetItem(item)
             v_item.setText(0, view)
@@ -240,14 +218,12 @@ class DbTreeWidget(QTreeWidget):
 
     def expand_function_group(self, item, data):
         item.takeChildren()
-        
         profile = data["profile"]
         dbname = data["dbname"]
         schema = data["schema"]
         
         engine = self.db_engines[(profile["id"], dbname)]
         funcs = engine.get_functions(schema)
-        
         for func in funcs:
             f_item = QTreeWidgetItem(item)
             f_item.setText(0, func)
@@ -301,7 +277,6 @@ class DbTreeWidget(QTreeWidget):
             return
             
         node_type = data.get("type")
-        
         menu = QMenu(self)
         
         if node_type == NODE_TYPE_CONNECTION:
@@ -364,7 +339,6 @@ class DbTreeWidget(QTreeWidget):
         
         engine = self.db_engines.get((profile["id"], dbname))
         if not engine:
-            # Expand to create engine if not already created
             engine = DbEngine(
                 host=profile["host"],
                 port=profile["port"],
@@ -383,7 +357,6 @@ class DbTreeWidget(QTreeWidget):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             new_data = dlg.get_data()
             config.add_or_update_profile(new_data)
-            # Reload configuration
             self.load_profiles()
             self.connection_changed_signal.emit()
 
@@ -395,7 +368,6 @@ class DbTreeWidget(QTreeWidget):
         )
         if reply == QMessageBox.StandardButton.Yes:
             config.delete_profile(profile["id"])
-            # Remove from active engine cache if any
             for key in list(self.db_engines.keys()):
                 if key[0] == profile["id"]:
                     self.db_engines[key].close()

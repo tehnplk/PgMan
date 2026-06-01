@@ -3,7 +3,7 @@ import time
 from PyQt6.QtWidgets import QApplication, QSplashScreen
 from PyQt6.QtGui import QPixmap, QColor, QFont
 from PyQt6.QtCore import Qt
-from src.ui.main_window import MainWindow
+from src.ui.main_window_logic import MainWindow
 from src.ui.stylesheets import DARK_THEME_QSS, get_resource_path
 
 def main():

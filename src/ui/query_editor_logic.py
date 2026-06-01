@@ -1,13 +1,8 @@
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QPlainTextEdit, QTableView, QTabWidget, QTextEdit,
-    QPushButton, QLabel, QToolBar
-)
+from PyQt6.QtWidgets import QWidget
 from PyQt6.QtCore import Qt, QAbstractTableModel, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtGui import QColor
 import time
-
-from src.ui.syntax_highlighter import SQLHighlighter
+from src.ui.query_editor_ui import QueryEditorUI
 
 class SqlTableModel(QAbstractTableModel):
     def __init__(self, columns=None, rows=None, parent=None):
@@ -30,7 +25,6 @@ class SqlTableModel(QAbstractTableModel):
                 return "[NULL]"
             return str(val)
         elif role == Qt.ItemDataRole.ForegroundRole:
-            # Color NULL cells slightly differently (muted)
             val = self.rows_data[index.row()][index.column()]
             if val is None:
                 return QColor("#5c6370")
@@ -65,91 +59,29 @@ class QueryWorker(QThread):
             self.failed.emit(str(e), duration)
 
 
-class QueryEditorTab(QWidget):
+class QueryEditorTab(QueryEditorUI):
     def __init__(self, db_engine, database_name, schema_name="public", parent=None):
-        super().__init__(parent)
         self.db_engine = db_engine
-        self.database_name = database_name
-        self.schema_name = schema_name
-        self.worker = None
+        super().__init__(database_name, schema_name, parent)
         
-        self.init_ui()
-
-    def init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # Toolbar
-        toolbar = QToolBar()
-        self.run_btn = QPushButton("▶ Run")
-        self.run_btn.setObjectName("runBtn")
         self.run_btn.clicked.connect(self.run_query)
-        toolbar.addWidget(self.run_btn)
-
-        toolbar.addSeparator()
-        self.status_label = QLabel(f"Connected to: {self.database_name} ({self.schema_name})")
-        self.status_label.setStyleSheet("color: #abb2bf; padding-left: 10px;")
-        toolbar.addWidget(self.status_label)
-
-        layout.addWidget(toolbar)
-
-        # Splitter between Editor and Results
-        splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # SQL Editor
-        self.editor = QPlainTextEdit()
-        self.editor.setPlaceholderText("SELECT * FROM schema.table LIMIT 100;")
-        
-        # Set code font
-        font = QFont("Consolas", 11)
-        if not font.exactMatch():
-            font = QFont("Courier New", 11)
-        self.editor.setFont(font)
-        self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-
-        # Set Syntax Highlighter
-        self.highlighter = SQLHighlighter(self.editor.document())
-
-        splitter.addWidget(self.editor)
-
-        # Bottom Area Tabs (Results vs Messages)
-        self.bottom_tabs = QTabWidget()
-        
-        # Results grid
-        self.results_view = QTableView()
-        self.bottom_tabs.addTab(self.results_view, "Results")
-
-        # Messages log
-        self.message_log = QTextEdit()
-        self.message_log.setReadOnly(True)
-        self.message_log.setFont(font)
-        self.bottom_tabs.addTab(self.message_log, "Messages")
-
-        splitter.addWidget(self.bottom_tabs)
-        
-        # Set splitter sizes (approx 40% editor, 60% results)
-        splitter.setSizes([300, 450])
-
-        layout.addWidget(splitter)
+        self.worker = None
 
     def run_query(self):
         sql = self.editor.toPlainText().strip()
         if not sql:
             return
 
-        # Check if query is selected text or whole editor
         cursor = self.editor.textCursor()
         if cursor.hasSelection():
-            sql = cursor.selectedText().replace('\u2029', '\n') # PyQt line separators
+            sql = cursor.selectedText().replace('\u2029', '\n')
 
         self.run_btn.setEnabled(False)
         self.run_btn.setText("⏳ Executing...")
         self.message_log.clear()
-        self.bottom_tabs.setCurrentIndex(1) # Switch to Messages tab during run
+        self.bottom_tabs.setCurrentIndex(1)
         self.message_log.append("Executing query...")
 
-        # Run SQL in worker thread
         self.worker = QueryWorker(self.db_engine, sql)
         self.worker.finished.connect(self.on_query_success)
         self.worker.failed.connect(self.on_query_failure)
@@ -166,14 +98,13 @@ class QueryEditorTab(QWidget):
             model = SqlTableModel(columns, rows, self)
             self.results_view.setModel(model)
             self.results_view.resizeColumnsToContents()
-            # Limit column sizes so very wide columns don't stretch indefinitely
             for c in range(len(columns)):
                 if self.results_view.columnWidth(c) > 300:
                     self.results_view.setColumnWidth(c, 300)
-            self.bottom_tabs.setCurrentIndex(0) # Show results
+            self.bottom_tabs.setCurrentIndex(0)
         else:
             self.results_view.setModel(None)
-            self.bottom_tabs.setCurrentIndex(1) # Remain on messages
+            self.bottom_tabs.setCurrentIndex(1)
 
     def on_query_failure(self, error_message, duration):
         self.run_btn.setEnabled(True)
@@ -181,4 +112,4 @@ class QueryEditorTab(QWidget):
         
         self.message_log.append(f"\n❌ ERROR: {error_message}")
         self.message_log.append(f"Execution time: {duration:.3f} s")
-        self.bottom_tabs.setCurrentIndex(1) # Show messages
+        self.bottom_tabs.setCurrentIndex(1)

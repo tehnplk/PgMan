@@ -1,20 +1,16 @@
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableView,
-    QPushButton, QComboBox, QLabel, QMessageBox, QToolBar
-)
-from PyQt6.QtCore import Qt, QAbstractTableModel, pyqtSignal
+from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtCore import Qt, QAbstractTableModel
 from PyQt6.QtGui import QColor
+from src.ui.table_viewer_ui import TableViewerUI
 
 class EditableSqlTableModel(QAbstractTableModel):
     def __init__(self, columns=None, rows=None, primary_keys=None, parent=None):
         super().__init__(parent)
         self.cols = columns or []
         self.rows_data = [list(r) for r in (rows or [])]
-        # Keep original copies to generate WHERE clauses and detect changes
         self.original_rows_data = [list(r) for r in self.rows_data]
         self.primary_keys = primary_keys or []
         
-        # Edit tracking
         self.edited_cells = {}  # {row_idx: {col_idx: new_value}}
         self.deleted_row_indices = set()
 
@@ -28,7 +24,6 @@ class EditableSqlTableModel(QAbstractTableModel):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
         if index.row() in self.deleted_row_indices:
-            # Row is marked for deletion; allow selection but not editing
             return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         return Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
 
@@ -76,7 +71,6 @@ class EditableSqlTableModel(QAbstractTableModel):
         row = index.row()
         col = index.column()
         
-        # Handle custom null/empty entry
         if value == "[NULL]" or value == "":
             stored_value = None
         else:
@@ -84,7 +78,6 @@ class EditableSqlTableModel(QAbstractTableModel):
 
         self.rows_data[row][col] = stored_value
         
-        # If it's a new row, we don't need to track in edited_cells (its whole row is inserts)
         if row < len(self.original_rows_data):
             if row not in self.edited_cells:
                 self.edited_cells[row] = {}
@@ -126,7 +119,6 @@ class EditableSqlTableModel(QAbstractTableModel):
                 pks[pk] = self.original_rows_data[row][pk_idx]
                 
             if not pks:
-                # Use all original columns if no primary keys
                 for idx, col_name in enumerate(self.cols):
                     pks[col_name] = self.original_rows_data[row][idx]
                     
@@ -167,13 +159,10 @@ class EditableSqlTableModel(QAbstractTableModel):
         return updates, inserts, deletes
 
 
-class TableViewerTab(QWidget):
+class TableViewerTab(TableViewerUI):
     def __init__(self, db_engine, dbname, schema, table_name, parent=None):
-        super().__init__(parent)
         self.db_engine = db_engine
-        self.dbname = dbname
-        self.schema = schema
-        self.table_name = table_name
+        super().__init__(dbname, schema, table_name, parent)
         
         # Pagination state
         self.current_page = 1
@@ -181,79 +170,21 @@ class TableViewerTab(QWidget):
         self.total_rows = 0
         self.total_pages = 1
         
-        self.init_ui()
+        self.setup_logic()
         self.load_data()
 
-    def init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # Toolbar
-        toolbar = QToolBar()
-        
-        self.add_btn = QPushButton("➕ Add Row")
+    def setup_logic(self):
         self.add_btn.clicked.connect(self.add_row)
-        toolbar.addWidget(self.add_btn)
-        
-        self.delete_btn = QPushButton("❌ Delete Row")
         self.delete_btn.clicked.connect(self.delete_row)
-        toolbar.addWidget(self.delete_btn)
-
-        toolbar.addSeparator()
-
-        self.commit_btn = QPushButton("✔ Commit")
-        self.commit_btn.setObjectName("saveBtn")
         self.commit_btn.clicked.connect(self.commit_changes)
-        toolbar.addWidget(self.commit_btn)
-        
-        self.refresh_btn = QPushButton("↺ Refresh")
         self.refresh_btn.clicked.connect(self.load_data)
-        toolbar.addWidget(self.refresh_btn)
-
-        # Spacer in toolbar
-        spacer = QWidget()
-        spacer.setSizePolicy(spacer.sizePolicy().Policy.Expanding, spacer.sizePolicy().Policy.Preferred)
-        toolbar.addWidget(spacer)
-
-        # Pagination controls
-        self.first_page_btn = QPushButton("|<")
-        self.first_page_btn.clicked.connect(self.go_first_page)
-        toolbar.addWidget(self.first_page_btn)
-
-        self.prev_page_btn = QPushButton("<")
-        self.prev_page_btn.clicked.connect(self.go_prev_page)
-        toolbar.addWidget(self.prev_page_btn)
-
-        self.page_label = QLabel("Page 1 of 1")
-        self.page_label.setStyleSheet("padding: 0px 8px; color: #abb2bf;")
-        toolbar.addWidget(self.page_label)
-
-        self.next_page_btn = QPushButton(">")
-        self.next_page_btn.clicked.connect(self.go_next_page)
-        toolbar.addWidget(self.next_page_btn)
-
-        self.last_page_btn = QPushButton(">|")
-        self.last_page_btn.clicked.connect(self.go_last_page)
-        toolbar.addWidget(self.last_page_btn)
-
-        toolbar.addSeparator()
         
-        self.limit_combo = QComboBox()
-        self.limit_combo.addItems(["100", "500", "1000"])
+        self.first_page_btn.clicked.connect(self.go_first_page)
+        self.prev_page_btn.clicked.connect(self.go_prev_page)
+        self.next_page_btn.clicked.connect(self.go_next_page)
+        self.last_page_btn.clicked.connect(self.go_last_page)
+        
         self.limit_combo.currentTextChanged.connect(self.on_limit_changed)
-        toolbar.addWidget(self.limit_combo)
-
-        layout.addWidget(toolbar)
-
-        # Main Table View
-        self.table_view = QTableView()
-        layout.addWidget(self.table_view)
-
-        # Status Bar
-        self.status_bar_lbl = QLabel(f"Table: {self.schema}.{self.table_name} | Rows: 0")
-        self.status_bar_lbl.setStyleSheet("padding: 4px; color: #5c6370; background-color: #21252b;")
-        layout.addWidget(self.status_bar_lbl)
 
     def load_data(self):
         self.setCursor(Qt.CursorShape.WaitCursor)
@@ -304,7 +235,6 @@ class TableViewerTab(QWidget):
     def add_row(self):
         if hasattr(self, "model"):
             self.model.add_row()
-            # Scroll to bottom
             self.table_view.scrollToBottom()
 
     def delete_row(self):
@@ -342,8 +272,6 @@ class TableViewerTab(QWidget):
 
         self.setCursor(Qt.CursorShape.WaitCursor)
         try:
-            # We run within a simple psycopg transaction block if possible, but 
-            # for now we execute individually with engine.
             # 1. Run Deletes first
             for pk_dict in deletes:
                 self.db_engine.delete_row(self.schema, self.table_name, pk_dict)
@@ -357,10 +285,10 @@ class TableViewerTab(QWidget):
                 self.db_engine.insert_row(self.schema, self.table_name, ins)
 
             QMessageBox.information(self, "Success", "Changes successfully committed to database!")
-            self.load_data()  # Reload
+            self.load_data()
         except Exception as e:
             QMessageBox.critical(self, "Commit Failed", f"An error occurred while saving changes:\n{str(e)}\n\nReloading table data...")
-            self.load_data()  # Reload to sync state
+            self.load_data()
         finally:
             self.setCursor(Qt.CursorShape.ArrowCursor)
 
