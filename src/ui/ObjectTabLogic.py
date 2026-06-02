@@ -248,9 +248,9 @@ class ObjectTab(ObjectTabUI):
         
         # Cache emoji icon
         emoji_map = {
-            "Tables": "📊",
-            "Views": "👁️",
-            "Functions": "⚙️"
+            "Tables": "📄",
+            "Views": "📄",
+            "Functions": "📄"
         }
         self.emoji = emoji_map.get(self.group_name, "📄")
         self.cached_icon = emoji_to_icon(self.emoji)
@@ -558,9 +558,9 @@ class ObjectTab(ObjectTabUI):
         self.profile = profile
         
         emoji_map = {
-            "Tables": "📊",
-            "Views": "👁️",
-            "Functions": "⚙️"
+            "Tables": "📄",
+            "Views": "📄",
+            "Functions": "📄"
         }
         self.emoji = emoji_map.get(self.group_name, "📄")
         self.cached_icon = emoji_to_icon(self.emoji)
