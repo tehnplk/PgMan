@@ -25,18 +25,21 @@ def main():
     splash = ModernSplashScreen(theme=theme)
     splash.show()
     
-    # 2. Simulate progressive modern loading messages
-    splash.showMessage("Loading database configurations...", 30)
-    app.processEvents()
-    time.sleep(0.5)
-
-    splash.showMessage("Initializing UI subsystems...", 65)
-    app.processEvents()
-    time.sleep(0.5)
-
-    splash.showMessage("Loading database explorer module...", 100)
-    app.processEvents()
-    time.sleep(0.4)
+    # 2. Simulate progressive modern loading messages smoothly
+    loading_steps = [
+        (30, "Loading database configurations..."),
+        (65, "Initializing UI subsystems..."),
+        (100, "Loading database explorer module...")
+    ]
+    
+    current_progress = 0
+    for target_progress, message in loading_steps:
+        splash.showMessage(message, current_progress)
+        while current_progress < target_progress:
+            current_progress += 1
+            splash.setProgress(current_progress)
+            app.processEvents()
+            time.sleep(0.005)
 
     # 3. Initialize & show main window
     window = MainWindow()
