@@ -87,7 +87,8 @@ class DbTreeWidget(DbTreeUI):
             password=profile.get("password", ""),
             sslmode=profile.get("sslmode", "prefer"),
             db_type=profile.get("db_type", "PostgreSQL"),
-            file_path=profile.get("file_path", "")
+            file_path=profile.get("file_path", ""),
+            charset=profile.get("charset", "")
         )
 
     def expand_connection(self, item, profile):

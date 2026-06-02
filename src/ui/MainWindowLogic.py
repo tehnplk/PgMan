@@ -72,7 +72,8 @@ class MainWindow(MainWindowUI):
                     username=profile["username"],
                     password=profile["password"],
                     sslmode=profile.get("sslmode", "prefer"),
-                    db_type=profile.get("db_type", "PostgreSQL")
+                    db_type=profile.get("db_type", "PostgreSQL"),
+                    charset=profile.get("charset", "")
                 )
                 engine.connect()
                 self.tree.db_engines[engine_key] = engine

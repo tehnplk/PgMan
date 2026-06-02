@@ -3,7 +3,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 class DbEngine:
-    def __init__(self, host, port, database, username, password, sslmode="prefer", db_type="postgresql", file_path=""):
+    def __init__(self, host, port, database, username, password, sslmode="prefer", db_type="postgresql", file_path="", charset=""):
         self.host = host
         self.port = int(port) if port else 0
         self.database = database
@@ -12,6 +12,7 @@ class DbEngine:
         self.sslmode = sslmode
         self.db_type = db_type.lower()
         self.file_path = file_path
+        self.charset = charset
         self._connection = None
         
         # Metadata Cache
@@ -48,15 +49,18 @@ class DbEngine:
             )
         elif self.db_type == "mysql":
             import pymysql
-            self._connection = pymysql.connect(
-                host=self.host,
-                port=self.port,
-                user=self.username,
-                password=self.password,
-                database=self.database if self.database else None,
-                connect_timeout=5,
-                autocommit=True
-            )
+            conn_args = {
+                "host": self.host,
+                "port": self.port,
+                "user": self.username,
+                "password": self.password,
+                "database": self.database if self.database else None,
+                "connect_timeout": 5,
+                "autocommit": True
+            }
+            if self.charset:
+                conn_args["charset"] = self.charset
+            self._connection = pymysql.connect(**conn_args)
         elif self.db_type == "sqlite":
             import sqlite3
             self._connection = sqlite3.connect(self.file_path)

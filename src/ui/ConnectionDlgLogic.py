@@ -40,11 +40,16 @@ class ConnectionDialog(ConnectionDialogUI):
 
     def on_db_type_changed(self, db_type):
         is_pg = (db_type == "PostgreSQL")
+        is_mysql = (db_type == "MySQL")
         is_sqlite = (db_type == "SQLite")
         
         # Toggle SSL mode fields (PostgreSQL only)
         self.ssl_label.setVisible(is_pg)
         self.ssl_combo.setVisible(is_pg)
+        
+        # Toggle Charset mode fields (MySQL only)
+        self.charset_label.setVisible(is_mysql)
+        self.charset_combo.setVisible(is_mysql)
         
         # Toggle server vs file fields
         self._set_server_fields_visible(not is_sqlite)
@@ -120,7 +125,8 @@ class ConnectionDialog(ConnectionDialogUI):
                 "database": os.path.basename(file_path),
                 "username": "",
                 "password": "",
-                "sslmode": ""
+                "sslmode": "",
+                "charset": ""
             }
         
         default_port = 5432 if db_type == "PostgreSQL" else 3306
@@ -135,7 +141,8 @@ class ConnectionDialog(ConnectionDialogUI):
             "database": self.db_input.text().strip(),
             "username": self.user_input.text().strip() or default_user,
             "password": self.pass_input.text(),
-            "sslmode": self.ssl_combo.currentText()
+            "sslmode": self.ssl_combo.currentText(),
+            "charset": self.charset_combo.currentText() if db_type == "MySQL" else ""
         }
 
     def test_connection(self):
@@ -165,14 +172,17 @@ class ConnectionDialog(ConnectionDialogUI):
                 conn.close()
             else:
                 import pymysql
-                conn = pymysql.connect(
-                    host=data["host"],
-                    port=data["port"],
-                    database=data["database"] if data["database"] else None,
-                    user=data["username"],
-                    password=data["password"],
-                    connect_timeout=5
-                )
+                conn_args = {
+                    "host": data["host"],
+                    "port": data["port"],
+                    "database": data["database"] if data["database"] else None,
+                    "user": data["username"],
+                    "password": data["password"],
+                    "connect_timeout": 5
+                }
+                if data.get("charset"):
+                    conn_args["charset"] = data["charset"]
+                conn = pymysql.connect(**conn_args)
                 conn.close()
             QMessageBox.information(self, "Success", "Connection tested successfully!", QMessageBox.StandardButton.Ok)
         except Exception as e:

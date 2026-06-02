@@ -1,3 +1,4 @@
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QComboBox, QPushButton, QLabel
@@ -55,6 +56,27 @@ class ConnectionDialogUI(QDialog):
         self.ssl_combo.addItems(["disable", "allow", "prefer", "require", "verify-ca", "verify-full"])
         self.ssl_combo.setCurrentText(self.profile.get("sslmode", "prefer"))
 
+        # Charset fields (MySQL only)
+        self.charset_label = QLabel("Charset:")
+        self.charset_combo = QComboBox()
+        self.charset_combo.setEditable(True)
+        self.charset_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        
+        charsets = [
+            "utf8mb4", "utf8", "latin1", "ascii", "binary", "utf16", "utf32", "ucs2",
+            "gbk", "gb2312", "big5", "sjis", "ujis", "euckr", "tis620",
+            "cp1250", "cp1251", "cp1252", "cp1256", "cp1257",
+            "cp850", "cp852", "cp866", "koi8r", "koi8u", "dec8", "greek", "hebrew"
+        ]
+        self.charset_combo.addItems(charsets)
+        
+        completer = self.charset_combo.completer()
+        if completer:
+            completer.setFilterMode(Qt.MatchFlag.MatchContains)
+            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            
+        self.charset_combo.setCurrentText(self.profile.get("charset", "utf8mb4"))
+
         # --- SQLite file-mode fields ---
         self.file_input = QLineEdit()
         self.file_input.setPlaceholderText("Path to .db or .sqlite file")
@@ -90,6 +112,7 @@ class ConnectionDialogUI(QDialog):
         self.form_layout.addRow(self.user_label, self.user_input)
         self.form_layout.addRow(self.pass_label, self.pass_input)
         self.form_layout.addRow(self.ssl_label, self.ssl_combo)
+        self.form_layout.addRow(self.charset_label, self.charset_combo)
 
         # SQLite file row
         self.file_label = QLabel("Database File:")
