@@ -1,7 +1,7 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QLineEdit, QComboBox, QPushButton, QLabel
+    QLineEdit, QComboBox, QPushButton, QLabel, QCompleter
 )
 
 class ConnectionDialogUI(QDialog):
@@ -74,6 +74,7 @@ class ConnectionDialogUI(QDialog):
         if completer:
             completer.setFilterMode(Qt.MatchFlag.MatchContains)
             completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
             
         self.charset_combo.setCurrentText(self.profile.get("charset", "utf8mb4"))
 
