@@ -7,6 +7,13 @@ from src.ui.MainWindowLogic import MainWindow
 from src.ui.Stylesheets import get_theme_qss, get_resource_path
 
 def main():
+    if sys.platform == 'win32':
+        import ctypes
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("tehnplk.pgman.client.1.0")
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
     
     # Load and apply theme from settings (default to dark)
