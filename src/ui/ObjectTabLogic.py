@@ -284,6 +284,8 @@ class ObjectTab(ObjectTabUI):
         self.start_loading()
 
     def start_loading(self):
+        if self.loader_worker is not None and self.loader_worker.isRunning():
+            return
         # Clear UI elements and show loading message
         self.status_lbl.setText("Loading objects...")
         
@@ -620,6 +622,8 @@ class ObjectTab(ObjectTabUI):
                 menu.addSeparator()
                 
         refresh_action = menu.addAction("Refresh")
+        is_running = self.loader_worker is not None and self.loader_worker.isRunning()
+        refresh_action.setEnabled(not is_running)
         
         if not data and self.group_name == "Tables":
             menu.addSeparator()

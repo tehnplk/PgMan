@@ -260,6 +260,7 @@ class TableViewerTab(TableViewerUI):
         self.page_size = 100
         self.total_rows = 0
         self.total_pages = 1
+        self.is_loading = False
         
         self.setup_logic()
         self.load_data()
@@ -310,6 +311,7 @@ class TableViewerTab(TableViewerUI):
         return super().eventFilter(source, event)
 
     def set_loading_state(self, is_loading):
+        self.is_loading = is_loading
         self.add_btn.setEnabled(not is_loading)
         self.delete_btn.setEnabled(not is_loading)
         self.commit_btn.setEnabled(not is_loading)
@@ -349,6 +351,8 @@ class TableViewerTab(TableViewerUI):
             self.setCursor(Qt.CursorShape.ArrowCursor)
 
     def load_data(self):
+        if self.is_loading:
+            return
         self.set_loading_state(True)
         self.status_bar_lbl.setText("⏳ Loading table data...")
         
@@ -521,6 +525,7 @@ class TableViewerTab(TableViewerUI):
         
         # 5. Refresh
         refresh_action = menu.addAction("↺ Refresh")
+        refresh_action.setEnabled(not self.is_loading)
         
         # 6. Show DDL
         ddl_action = menu.addAction("📄 Show DDL")
