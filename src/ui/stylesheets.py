@@ -37,7 +37,7 @@ QTreeView, QTreeWidget {
 
 QTreeView::item, QTreeWidget::item {
     height: 28px;
-    padding-left: 5px;
+    padding-left: 10px;
     border-radius: 4px;
     margin: 1px 0px;
     border: none;
@@ -416,7 +416,7 @@ QTreeView, QTreeWidget {
 
 QTreeView::item, QTreeWidget::item {
     height: 28px;
-    padding-left: 5px;
+    padding-left: 10px;
     border-radius: 4px;
     margin: 1px 0px;
     border: none;

@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from src.ui.SyntaxHighlighter import SQLHighlighter
+from src.ui.SqlEditor import SqlEditor
 
 class QueryEditorUI(QWidget):
     def __init__(self, database_name, schema_name="public", parent=None):
@@ -35,7 +36,7 @@ class QueryEditorUI(QWidget):
         splitter = QSplitter(Qt.Orientation.Vertical)
 
         # SQL Editor
-        self.editor = QPlainTextEdit()
+        self.editor = SqlEditor()
         self.editor.setPlaceholderText("SELECT * FROM schema.table LIMIT 100;")
         
         # Set code font

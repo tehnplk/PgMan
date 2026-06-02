@@ -12,4 +12,4 @@ class DbTreeUI(QTreeWidget):
         super().__init__(parent)
         self.setHeaderLabel("Database Explorer")
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.setIndentation(12)  # Reduce indentation for compact hierarchy
+        self.setIndentation(17)  # Increase indentation for clearer hierarchy

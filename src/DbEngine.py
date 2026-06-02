@@ -44,7 +44,7 @@ class DbEngine:
                 user=self.username,
                 password=self.password,
                 sslmode=self.sslmode,
-                connect_timeout=10
+                connect_timeout=5
             )
         elif self.db_type == "mysql":
             import pymysql
@@ -54,7 +54,7 @@ class DbEngine:
                 user=self.username,
                 password=self.password,
                 database=self.database if self.database else None,
-                connect_timeout=10,
+                connect_timeout=5,
                 autocommit=True
             )
         elif self.db_type == "sqlite":
@@ -106,6 +106,65 @@ class DbEngine:
         resolved = self._resolve_schema(schema)
         return f"{self._quote_ident(resolved)}.{self._quote_ident(table_name)}"
 
+    def translate_query(self, query):
+        import re
+        query_stripped = query.strip().rstrip(';').strip()
+        
+        # 1. Handle DESC / DESCRIBE
+        match_desc = re.match(r'^(DESC|DESCRIBE)\s+(.+)$', query_stripped, re.IGNORECASE)
+        if match_desc:
+            table_name = match_desc.group(2).strip().strip('"').strip("'").strip('`')
+            if self.db_type == "postgresql":
+                if '.' in table_name:
+                    parts = table_name.split('.')
+                    qualified = f'"{parts[0]}"."{parts[1]}"'
+                else:
+                    qualified = f'"{table_name}"'
+                return f"""
+                SELECT 
+                    a.attname AS "Column",
+                    pg_catalog.format_type(a.atttypid, a.atttypmod) AS "Type",
+                    CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS "Nullable",
+                    pg_catalog.pg_get_expr(d.adbin, d.adrelid) AS "Default"
+                FROM pg_catalog.pg_attribute a
+                LEFT JOIN pg_catalog.pg_attrdef d ON (a.attrelid, a.attnum) = (d.adrelid, d.adnum)
+                WHERE a.attrelid = '{qualified}'::regclass
+                  AND a.attnum > 0
+                  AND NOT a.attisdropped
+                ORDER BY a.attnum;
+                """
+            elif self.db_type == "sqlite":
+                return f'PRAGMA table_info("{table_name}");'
+            elif self.db_type == "mysql":
+                return query
+                
+        # 2. Handle SHOW TABLES, SHOW DATABASES, SHOW SCHEMAS, SHOW VIEWS
+        match_show = re.match(r'^SHOW\s+(TABLES|DATABASES|SCHEMAS|VIEWS)$', query_stripped, re.IGNORECASE)
+        if match_show:
+            show_type = match_show.group(1).upper()
+            if self.db_type == "postgresql":
+                if show_type == "TABLES":
+                    return "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name;"
+                elif show_type == "DATABASES":
+                    return "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true ORDER BY datname;"
+                elif show_type == "SCHEMAS":
+                    return "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT LIKE 'pg_%' AND schema_name != 'information_schema' ORDER BY schema_name;"
+                elif show_type == "VIEWS":
+                    return "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'VIEW' ORDER BY table_name;"
+            elif self.db_type == "sqlite":
+                if show_type == "TABLES":
+                    return "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;"
+                elif show_type == "DATABASES":
+                    return "SELECT 'main' AS database;"
+                elif show_type == "SCHEMAS":
+                    return "SELECT 'main' AS schema;"
+                elif show_type == "VIEWS":
+                    return "SELECT name FROM sqlite_master WHERE type='view' ORDER BY name;"
+            elif self.db_type == "mysql":
+                return query
+
+        return query
+
     def execute_query(self, query, params=None, fetch_results=True):
         """
         Execute an arbitrary SQL query.
@@ -114,6 +173,7 @@ class DbEngine:
             rows: list of tuples (or empty list)
             message: string with rowcount or status message
         """
+        query = self.translate_query(query)
         conn = self.connect()
         if self.db_type == "postgresql":
             conn.autocommit = True

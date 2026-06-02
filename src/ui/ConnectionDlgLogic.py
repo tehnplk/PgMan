@@ -160,7 +160,7 @@ class ConnectionDialog(ConnectionDialogUI):
                     user=data["username"],
                     password=data["password"],
                     sslmode=data["sslmode"],
-                    connect_timeout=4
+                    connect_timeout=5
                 )
                 conn.close()
             else:
@@ -171,7 +171,7 @@ class ConnectionDialog(ConnectionDialogUI):
                     database=data["database"] if data["database"] else None,
                     user=data["username"],
                     password=data["password"],
-                    connect_timeout=4
+                    connect_timeout=5
                 )
                 conn.close()
             QMessageBox.information(self, "Success", "Connection tested successfully!", QMessageBox.StandardButton.Ok)

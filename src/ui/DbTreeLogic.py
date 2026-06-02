@@ -68,6 +68,12 @@ class DbTreeWidget(DbTreeUI):
         except Exception as e:
             show_exception_dialog(self, "Error", f"Failed to expand items:\n{str(e)}")
             item.setExpanded(False)
+            if data and data.get("type") in (NODE_TYPE_CONNECTION, NODE_TYPE_DATABASE, NODE_TYPE_SCHEMA):
+                item.takeChildren()
+                dummy = QTreeWidgetItem(item)
+                dummy.setText(0, "Loading...")
+                data["loaded"] = False
+                item.setData(0, Qt.ItemDataRole.UserRole, data)
         finally:
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 
