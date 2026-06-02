@@ -243,6 +243,20 @@ class TableViewerTab(TableViewerUI):
         self.table_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table_view.customContextMenuRequested.connect(self.show_context_menu)
         self.table_view.setSortingEnabled(True)
+        self.table_view.installEventFilter(self)
+
+    def eventFilter(self, source, event):
+        from PyQt6.QtCore import QEvent
+        if source == self.table_view and event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Down:
+                current_index = self.table_view.currentIndex()
+                if current_index.isValid() and hasattr(self, "model"):
+                    row = current_index.row()
+                    rowCount = self.model.rowCount()
+                    if row == rowCount - 1:
+                        self.add_row()
+                        return True
+        return super().eventFilter(source, event)
 
     def set_loading_state(self, is_loading):
         self.add_btn.setEnabled(not is_loading)
