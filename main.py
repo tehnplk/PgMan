@@ -37,16 +37,17 @@ def main():
     
     # 2. Simulate progressive modern loading messages
     text_color = QColor("#00e5ff")  # Neon cyan accent color
+    from src.Config import VERSION
     
-    splash.showMessage("Loading database configurations...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, text_color)
+    splash.showMessage(f"PgMan v{VERSION} - Loading database configurations...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, text_color)
     app.processEvents()
     time.sleep(0.5)
 
-    splash.showMessage("Initializing UI subsystems...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, text_color)
+    splash.showMessage(f"PgMan v{VERSION} - Initializing UI subsystems...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, text_color)
     app.processEvents()
     time.sleep(0.5)
 
-    splash.showMessage("Loading database explorer module...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, text_color)
+    splash.showMessage(f"PgMan v{VERSION} - Loading database explorer module...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, text_color)
     app.processEvents()
     time.sleep(0.4)
 
