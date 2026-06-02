@@ -41,3 +41,11 @@ def show_exception_dialog(parent, title, message):
     # Copy details if clicked
     if msg_box.clickedButton() == copy_btn:
         QApplication.clipboard().setText(message)
+
+active_threads = set()
+
+def start_thread(thread):
+    active_threads.add(thread)
+    thread.finished.connect(lambda: active_threads.discard(thread))
+    thread.start()
+

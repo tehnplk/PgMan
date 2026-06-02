@@ -2,10 +2,10 @@ from PyQt6.QtWidgets import QMessageBox, QMenu
 from PyQt6.QtCore import Qt, QAbstractTableModel, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 from src.ui.TableViewerUI import TableViewerUI
-from src.ui.UiUtils import resize_columns_fast, show_exception_dialog
+from src.ui.UiUtils import resize_columns_fast, show_exception_dialog, start_thread
 
 class DataLoaderWorker(QThread):
-    finished = pyqtSignal(list, list, int, list)  # (columns, rows, total_rows, primary_keys)
+    finished = pyqtSignal(object, object, int, object)  # (columns, rows, total_rows, primary_keys)
     failed = pyqtSignal(str)                       # (error_message)
 
     def __init__(self, db_engine, schema, table_name, page_size, offset):
@@ -39,12 +39,19 @@ class EditableSqlTableModel(QAbstractTableModel):
     def __init__(self, columns=None, rows=None, primary_keys=None, parent=None):
         super().__init__(parent)
         self.cols = columns or []
-        self.rows_data = [list(r) for r in (rows or [])]
-        self.original_rows_data = [list(r) for r in self.rows_data]
         self.primary_keys = primary_keys or []
         
-        self.edited_cells = {}  # {row_idx: {col_idx: new_value}}
-        self.deleted_row_indices = set()
+        self.DELETED_OFFSET = len(self.cols)
+        self.EDITED_OFFSET = len(self.cols) + 1
+        self.ORIGINAL_OFFSET = len(self.cols) + 2
+        self.IS_NEW_OFFSET = len(self.cols) + 3
+        
+        # Each row is a list: [col_0, ..., col_N, is_deleted, edited_dict, original_row, is_new]
+        self.rows_data = []
+        for r in (rows or []):
+            row_list = list(r)
+            row_list.extend([False, {}, list(r), False])
+            self.rows_data.append(row_list)
 
     def rowCount(self, parent=None):
         return len(self.rows_data)
@@ -55,7 +62,8 @@ class EditableSqlTableModel(QAbstractTableModel):
     def flags(self, index):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
-        if index.row() in self.deleted_row_indices:
+        row_data = self.rows_data[index.row()]
+        if row_data[self.DELETED_OFFSET]:
             return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         return Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
 
@@ -65,23 +73,24 @@ class EditableSqlTableModel(QAbstractTableModel):
             
         row = index.row()
         col = index.column()
+        row_data = self.rows_data[row]
         
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
-            val = self.rows_data[row][col]
+            val = row_data[col]
             if val is None:
                 return "[NULL]" if role == Qt.ItemDataRole.DisplayRole else ""
             return str(val)
             
         elif role == Qt.ItemDataRole.BackgroundRole:
-            if row in self.deleted_row_indices:
+            if row_data[self.DELETED_OFFSET]:
                 return QColor("#5c2d30")  # Dark red for deleted
-            elif row >= len(self.original_rows_data):
+            elif row_data[self.IS_NEW_OFFSET]:
                 return QColor("#1e3f20")  # Dark green for new row
-            elif row in self.edited_cells and col in self.edited_cells[row]:
+            elif col in row_data[self.EDITED_OFFSET]:
                 return QColor("#5c431e")  # Amber for edited
                 
         elif role == Qt.ItemDataRole.ForegroundRole:
-            val = self.rows_data[row][col]
+            val = row_data[col]
             if val is None:
                 return QColor("#5c6370")
                 
@@ -102,18 +111,17 @@ class EditableSqlTableModel(QAbstractTableModel):
             
         row = index.row()
         col = index.column()
+        row_data = self.rows_data[row]
         
         if value == "[NULL]" or value == "":
             stored_value = None
         else:
             stored_value = value
 
-        self.rows_data[row][col] = stored_value
+        row_data[col] = stored_value
         
-        if row < len(self.original_rows_data):
-            if row not in self.edited_cells:
-                self.edited_cells[row] = {}
-            self.edited_cells[row][col] = stored_value
+        if not row_data[self.IS_NEW_OFFSET]:
+            row_data[self.EDITED_OFFSET][col] = stored_value
             
         self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.BackgroundRole])
         return True
@@ -121,6 +129,7 @@ class EditableSqlTableModel(QAbstractTableModel):
     def add_row(self):
         self.beginInsertRows(self.index(len(self.rows_data), 0), len(self.rows_data), len(self.rows_data))
         new_row = [None] * len(self.cols)
+        new_row.extend([False, {}, [None] * len(self.cols), True])
         self.rows_data.append(new_row)
         self.endInsertRows()
 
@@ -128,10 +137,8 @@ class EditableSqlTableModel(QAbstractTableModel):
         if row < 0 or row >= len(self.rows_data):
             return
             
-        if row in self.deleted_row_indices:
-            self.deleted_row_indices.remove(row)
-        else:
-            self.deleted_row_indices.add(row)
+        row_data = self.rows_data[row]
+        row_data[self.DELETED_OFFSET] = not row_data[self.DELETED_OFFSET]
             
         self.dataChanged.emit(
             self.index(row, 0), 
@@ -139,55 +146,69 @@ class EditableSqlTableModel(QAbstractTableModel):
             [Qt.ItemDataRole.BackgroundRole]
         )
 
+    def sort(self, column, order):
+        self.layoutAboutToBeChanged.emit()
+        reverse = (order == Qt.SortOrder.DescendingOrder)
+        
+        def sort_key(row_list):
+            val = row_list[column]
+            if val is None:
+                return (2, "")
+            if isinstance(val, (int, float)):
+                return (0, val)
+            try:
+                num_val = float(val) if '.' in str(val) else int(val)
+                return (0, num_val)
+            except Exception:
+                return (1, str(val).lower())
+
+        self.rows_data.sort(key=sort_key, reverse=reverse)
+        self.layoutChanged.emit()
+
     def get_pending_changes(self):
         updates = []
-        for row, cols_dict in self.edited_cells.items():
-            if row in self.deleted_row_indices:
-                continue
-            
-            pks = {}
-            for pk in self.primary_keys:
-                pk_idx = self.cols.index(pk)
-                pks[pk] = self.original_rows_data[row][pk_idx]
-                
-            if not pks:
-                for idx, col_name in enumerate(self.cols):
-                    pks[col_name] = self.original_rows_data[row][idx]
-                    
-            col_updates = {}
-            for col_idx, val in cols_dict.items():
-                col_updates[self.cols[col_idx]] = val
-                
-            updates.append({
-                "primary_keys": pks,
-                "updates": col_updates
-            })
-            
         inserts = []
-        for row in range(len(self.original_rows_data), len(self.rows_data)):
-            if row in self.deleted_row_indices:
-                continue
-            row_vals = self.rows_data[row]
-            insert_dict = {}
-            for idx, col_name in enumerate(self.cols):
-                if row_vals[idx] is not None:
-                    insert_dict[col_name] = row_vals[idx]
-            inserts.append(insert_dict)
-            
         deletes = []
-        for row in self.deleted_row_indices:
-            if row >= len(self.original_rows_data):
+        
+        for row_data in self.rows_data:
+            if row_data[self.DELETED_OFFSET]:
+                if not row_data[self.IS_NEW_OFFSET]:
+                    pks = {}
+                    orig_row = row_data[self.ORIGINAL_OFFSET]
+                    for pk in self.primary_keys:
+                        pk_idx = self.cols.index(pk)
+                        pks[pk] = orig_row[pk_idx]
+                    if not pks:
+                        for idx, col_name in enumerate(self.cols):
+                            pks[col_name] = orig_row[idx]
+                    deletes.append(pks)
                 continue
-            pks = {}
-            for pk in self.primary_keys:
-                pk_idx = self.cols.index(pk)
-                pks[pk] = self.original_rows_data[row][pk_idx]
                 
-            if not pks:
+            if row_data[self.IS_NEW_OFFSET]:
+                insert_dict = {}
                 for idx, col_name in enumerate(self.cols):
-                    pks[col_name] = self.original_rows_data[row][idx]
-            deletes.append(pks)
-            
+                    if row_data[idx] is not None:
+                        insert_dict[col_name] = row_data[idx]
+                inserts.append(insert_dict)
+            elif row_data[self.EDITED_OFFSET]:
+                pks = {}
+                orig_row = row_data[self.ORIGINAL_OFFSET]
+                for pk in self.primary_keys:
+                    pk_idx = self.cols.index(pk)
+                    pks[pk] = orig_row[pk_idx]
+                if not pks:
+                    for idx, col_name in enumerate(self.cols):
+                        pks[col_name] = orig_row[idx]
+                        
+                col_updates = {}
+                for col_idx, val in row_data[self.EDITED_OFFSET].items():
+                    col_updates[self.cols[col_idx]] = val
+                    
+                updates.append({
+                    "primary_keys": pks,
+                    "updates": col_updates
+                })
+                
         return updates, inserts, deletes
 
 
@@ -221,6 +242,7 @@ class TableViewerTab(TableViewerUI):
         
         self.table_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table_view.customContextMenuRequested.connect(self.show_context_menu)
+        self.table_view.setSortingEnabled(True)
 
     def set_loading_state(self, is_loading):
         self.add_btn.setEnabled(not is_loading)
@@ -271,7 +293,8 @@ class TableViewerTab(TableViewerUI):
         self.worker = DataLoaderWorker(self.db_engine, self.schema, self.table_name, self.page_size, offset)
         self.worker.finished.connect(self.on_load_success)
         self.worker.failed.connect(self.on_load_failed)
-        self.worker.start()
+        start_thread(self.worker)
+
 
     def on_load_success(self, columns, rows, total_rows, pks):
         self.set_loading_state(False)
@@ -403,7 +426,7 @@ class TableViewerTab(TableViewerUI):
         
         # 3. Set Cell to NULL (if clicking an active, non-null cell)
         null_action = None
-        if index.isValid() and hasattr(self, "model") and index.row() not in self.model.deleted_row_indices:
+        if index.isValid() and hasattr(self, "model") and not self.model.rows_data[index.row()][self.model.DELETED_OFFSET]:
             row = index.row()
             col = index.column()
             val = self.model.rows_data[row][col]

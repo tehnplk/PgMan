@@ -73,5 +73,5 @@ class TableViewerUI(QWidget):
 
         # Status Bar
         self.status_bar_lbl = QLabel(f"Table: {self.schema}.{self.table_name} | Rows: 0")
-        self.status_bar_lbl.setStyleSheet("padding: 4px; color: #5c6370; background-color: #21252b;")
+        self.status_bar_lbl.setObjectName("dataViewerStatusBar")
         layout.addWidget(self.status_bar_lbl)

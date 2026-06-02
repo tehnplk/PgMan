@@ -6,6 +6,7 @@ from src.ui.ConnectionDlgLogic import ConnectionDialog
 from src.ui.QueryEditorLogic import QueryEditorTab
 from src.ui.TableViewerLogic import TableViewerTab
 from src.ui.ObjectTabLogic import ObjectTab
+from src.ui.TableDesignerLogic import TableDesignerTab
 from src.DbEngine import DbEngine
 import src.Config as config
 from src.ui.UiUtils import show_exception_dialog
@@ -32,6 +33,7 @@ class MainWindow(MainWindowUI):
         self.tree.open_query_editor_signal.connect(self.add_query_tab)
         self.tree.open_table_viewer_signal.connect(self.add_table_tab)
         self.tree.open_object_tab_signal.connect(self.add_or_update_object_tab)
+        self.tree.open_table_designer_signal.connect(self.add_designer_tab)
         self.tabs.tabCloseRequested.connect(self.close_tab)
 
     def open_new_connection_dialog(self):
@@ -127,6 +129,7 @@ class MainWindow(MainWindowUI):
             tab = ObjectTab(db_engine, dbname, schema, group_name, profile, self)
             tab.open_table_signal.connect(self.add_table_tab)
             tab.open_query_signal.connect(self.add_query_tab)
+            tab.open_designer_signal.connect(self.add_designer_tab)
             if object_tab_idx != -1:
                 self.tabs.insertTab(object_tab_idx, tab, "Object")
                 self.tabs.removeTab(object_tab_idx + 1)
@@ -135,6 +138,24 @@ class MainWindow(MainWindowUI):
                 index = self.tabs.addTab(tab, "Object")
                 self.tabs.setCurrentIndex(index)
         self.status.showMessage(f"Listing {group_name} in {schema} under 'Object' tab")
+
+    def add_designer_tab(self, db_engine, dbname, schema, table_name, is_new_table=False):
+        # Check if designer for same table already open
+        for idx in range(self.tabs.count()):
+            widget = self.tabs.widget(idx)
+            if isinstance(widget, TableDesignerTab):
+                if widget.dbname == dbname and widget.schema == schema and widget.table_name == table_name:
+                    self.tabs.setCurrentIndex(idx)
+                    return
+
+        tab = TableDesignerTab(db_engine, dbname, schema, table_name, self, is_new_table=is_new_table)
+        tab_title = f"🛠 {table_name} (New)" if is_new_table else f"🛠 {table_name}"
+        index = self.tabs.addTab(tab, tab_title)
+        self.tabs.setCurrentIndex(index)
+        if is_new_table:
+            self.status.showMessage(f"Opened Table Designer to create: {schema}.{table_name}")
+        else:
+            self.status.showMessage(f"Opened Table Designer for: {schema}.{table_name}")
 
     def close_tab(self, index):
         widget = self.tabs.widget(index)

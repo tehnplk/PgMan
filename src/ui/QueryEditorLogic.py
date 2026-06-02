@@ -3,7 +3,7 @@ from PyQt6.QtCore import Qt, QAbstractTableModel, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QKeySequence, QShortcut
 import time
 from src.ui.QueryEditorUI import QueryEditorUI
-from src.ui.UiUtils import resize_columns_fast
+from src.ui.UiUtils import resize_columns_fast, start_thread
 
 class SqlTableModel(QAbstractTableModel):
     def __init__(self, columns=None, rows=None, parent=None):
@@ -41,7 +41,7 @@ class SqlTableModel(QAbstractTableModel):
 
 
 class QueryWorker(QThread):
-    finished = pyqtSignal(list, list, str, float)  # (columns, rows, message, duration)
+    finished = pyqtSignal(object, object, str, float)  # (columns, rows, message, duration)
     failed = pyqtSignal(str, float)               # (error_message, duration)
 
     def __init__(self, db_engine, sql):
@@ -79,9 +79,9 @@ class QueryEditorTab(QueryEditorUI):
         self.column_cache = {}
         
         # Shortcuts for running query
-        self.shortcut_return = QShortcut(QKeySequence("Ctrl+Return"), self)
+        self.shortcut_return = QShortcut(QKeySequence("Ctrl+Shift+Return"), self)
         self.shortcut_return.activated.connect(self.run_query)
-        self.shortcut_enter = QShortcut(QKeySequence("Ctrl+Enter"), self)
+        self.shortcut_enter = QShortcut(QKeySequence("Ctrl+Shift+Enter"), self)
         self.shortcut_enter.activated.connect(self.run_query)
         
         self.run_btn.clicked.connect(self.run_query)
@@ -135,7 +135,8 @@ class QueryEditorTab(QueryEditorUI):
         self.worker = QueryWorker(self.db_engine, sql)
         self.worker.finished.connect(self.on_query_success)
         self.worker.failed.connect(self.on_query_failure)
-        self.worker.start()
+        start_thread(self.worker)
+
 
     def on_query_success(self, columns, rows, message, duration):
         self.run_btn.setEnabled(True)

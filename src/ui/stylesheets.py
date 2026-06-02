@@ -30,7 +30,7 @@ QTreeView, QTreeWidget {
     background-color: #181a1f;
     border: none;
     border-right: 1px solid #282c34;
-    padding: 5px;
+    padding: 5px 5px 5px 10px;
     outline: none;
     show-decoration-selected: 0;
 }
@@ -61,6 +61,8 @@ QTreeView::item:selected, QTreeWidget::item:selected {
 QTreeView::branch, QTreeWidget::branch {
     background: transparent !important;
     background-color: transparent !important;
+    image: none !important;
+    border-image: none !important;
 }
 
 QTreeView::branch:selected, QTreeWidget::branch:selected,
@@ -385,6 +387,12 @@ QGroupBox::title {
     padding: 0 3px;
     color: #00e5ff;
 }
+
+#dataViewerStatusBar {
+    padding: 4px;
+    color: #5c6370;
+    background-color: #21252b;
+}
 """
 
 # Light Theme QSS Template
@@ -409,7 +417,7 @@ QTreeView, QTreeWidget {
     background-color: #ffffff;
     border: none;
     border-right: 1px solid #d0d7de;
-    padding: 5px;
+    padding: 5px 5px 5px 10px;
     outline: none;
     show-decoration-selected: 0;
 }
@@ -440,6 +448,8 @@ QTreeView::item:selected, QTreeWidget::item:selected {
 QTreeView::branch, QTreeWidget::branch {
     background: transparent !important;
     background-color: transparent !important;
+    image: none !important;
+    border-image: none !important;
 }
 
 QTreeView::branch:selected, QTreeWidget::branch:selected,
@@ -764,6 +774,13 @@ QGroupBox::title {
     left: 10px;
     padding: 0 3px;
     color: #0969da;
+}
+
+#dataViewerStatusBar {
+    padding: 4px;
+    color: #57606a;
+    background-color: #eaeef2;
+    border-top: 1px solid #d0d7de;
 }
 """
 

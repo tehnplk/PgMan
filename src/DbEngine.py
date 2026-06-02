@@ -1,6 +1,12 @@
 import os
 import psycopg
 from psycopg.rows import dict_row
+import threading
+
+def decode_val(val):
+    if isinstance(val, (bytes, bytearray)):
+        return val.decode('utf-8', errors='replace')
+    return val
 
 class DbEngine:
     def __init__(self, host, port, database, username, password, sslmode="prefer", db_type="postgresql", file_path="", charset=""):
@@ -13,13 +19,23 @@ class DbEngine:
         self.db_type = db_type.lower()
         self.file_path = file_path
         self.charset = charset
-        self._connection = None
+        self._local = threading.local()
         
         # Metadata Cache
         self._tables_cache = {}
         self._views_cache = {}
         self._funcs_cache = {}
         self._tables_detailed_cache = {}
+
+    @property
+    def _connection(self):
+        if not hasattr(self._local, "connection"):
+            return None
+        return self._local.connection
+
+    @_connection.setter
+    def _connection(self, value):
+        self._local.connection = value
 
     def connect(self):
         """Establish connection to the database."""
@@ -254,11 +270,11 @@ class DbEngine:
             return [os.path.basename(self.file_path)]
         elif self.db_type == "mysql":
             _, rows, _ = self.execute_query("SHOW DATABASES;")
-            return [row[0] for row in rows]
+            return [decode_val(row[0]) for row in rows]
         else:
             query = "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true ORDER BY datname;"
             _, rows, _ = self.execute_query(query)
-            return [row[0] for row in rows]
+            return [decode_val(row[0]) for row in rows]
 
     def get_schemas(self):
         """Fetch list of schemas in the current database."""
@@ -274,7 +290,7 @@ class DbEngine:
             ORDER BY schema_name;
             """
             _, rows, _ = self.execute_query(query)
-            return [row[0] for row in rows]
+            return [decode_val(row[0]) for row in rows]
 
     def get_tables(self, schema="public"):
         """Fetch list of tables in a schema."""
@@ -286,7 +302,11 @@ class DbEngine:
             _, rows = self._sqlite_execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
             )
-            tables = [row[0] for row in rows]
+            tables = [decode_val(row[0]) for row in rows]
+        elif self.db_type == "mysql":
+            query = f"SHOW FULL TABLES FROM `{resolved}` WHERE Table_type = 'BASE TABLE';"
+            _, rows, _ = self.execute_query(query)
+            tables = [decode_val(row[0]) for row in rows]
         else:
             query = """
             SELECT table_name 
@@ -295,7 +315,7 @@ class DbEngine:
             ORDER BY table_name;
             """
             _, rows, _ = self.execute_query(query, (resolved,))
-            tables = [row[0] for row in rows]
+            tables = [decode_val(row[0]) for row in rows]
         
         self._tables_cache[resolved] = tables
         return tables
@@ -339,7 +359,7 @@ class DbEngine:
                 except Exception:
                     row_count = 0
                 result.append({
-                    "name": t,
+                    "name": decode_val(t),
                     "rows": f"{row_count:,}",
                     "size": "-"
                 })
@@ -361,10 +381,14 @@ class DbEngine:
             ORDER BY table_name;
             """
             try:
+                try:
+                    self.execute_query("SET SESSION innodb_stats_on_metadata = 0;", fetch_results=False)
+                except Exception:
+                    pass
                 _, rows, _ = self.execute_query(query, (resolved,))
                 result = []
                 for r in rows:
-                    name = r[0]
+                    name = decode_val(r[0])
                     row_count = int(r[1])
                     size_bytes = r[2]
                     result.append({
@@ -392,7 +416,7 @@ class DbEngine:
                 _, rows, _ = self.execute_query(query, (resolved,))
                 result = []
                 for r in rows:
-                    name = r[0]
+                    name = decode_val(r[0])
                     row_count = int(r[1])
                     size_bytes = r[2]
                     result.append({
@@ -415,7 +439,11 @@ class DbEngine:
             _, rows = self._sqlite_execute(
                 "SELECT name FROM sqlite_master WHERE type='view' ORDER BY name"
             )
-            views = [row[0] for row in rows]
+            views = [decode_val(row[0]) for row in rows]
+        elif self.db_type == "mysql":
+            query = f"SHOW FULL TABLES FROM `{resolved}` WHERE Table_type = 'VIEW';"
+            _, rows, _ = self.execute_query(query)
+            views = [decode_val(row[0]) for row in rows]
         else:
             query = """
             SELECT table_name 
@@ -424,7 +452,7 @@ class DbEngine:
             ORDER BY table_name;
             """
             _, rows, _ = self.execute_query(query, (resolved,))
-            views = [row[0] for row in rows]
+            views = [decode_val(row[0]) for row in rows]
         
         self._views_cache[resolved] = views
         return views
@@ -458,12 +486,92 @@ class DbEngine:
         cols = []
         for row in rows:
             cols.append({
-                "name": row[0],
-                "type": row[1],
-                "nullable": row[2] == "YES" or row[2] == "yes",
-                "default": row[3]
+                "name": decode_val(row[0]),
+                "type": decode_val(row[1]),
+                "nullable": decode_val(row[2]) == "YES" or decode_val(row[2]) == "yes",
+                "default": decode_val(row[3])
             })
         return cols
+
+    def get_columns_detailed(self, schema, table_name):
+        """
+        Fetch detailed column info for the Table Designer.
+        Returns list of dicts with: name, column_type, nullable, default, key, extra, comment
+        """
+        if self.db_type == "sqlite":
+            _, rows = self._sqlite_execute(f'PRAGMA table_info("{table_name}")')
+            cols = []
+            for row in rows:
+                cols.append({
+                    "name": decode_val(row[1]),
+                    "column_type": decode_val(row[2]) or "TEXT",
+                    "nullable": not bool(row[3]),
+                    "default": decode_val(row[4]),
+                    "key": "PRI" if row[5] else "",
+                    "extra": "",
+                    "comment": ""
+                })
+            return cols
+
+        resolved = self._resolve_schema(schema)
+        if self.db_type == "mysql":
+            query = """
+            SELECT column_name, column_type, is_nullable, column_default,
+                   column_key, extra, column_comment
+            FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s
+            ORDER BY ordinal_position;
+            """
+            _, rows, _ = self.execute_query(query, (resolved, table_name))
+            cols = []
+            for row in rows:
+                cols.append({
+                    "name": decode_val(row[0]),
+                    "column_type": decode_val(row[1]),
+                    "nullable": decode_val(row[2]) in ("YES", "yes"),
+                    "default": decode_val(row[3]),
+                    "key": decode_val(row[4]) or "",
+                    "extra": decode_val(row[5]) or "",
+                    "comment": decode_val(row[6]) or ""
+                })
+            return cols
+        else:
+            # PostgreSQL
+            query = """
+            SELECT
+                a.attname AS column_name,
+                format_type(a.atttypid, a.atttypmod) AS column_type,
+                NOT a.attnotnull AS nullable,
+                pg_get_expr(ad.adbin, ad.adrelid) AS column_default,
+                CASE WHEN pk.contype = 'p' THEN 'PRI' ELSE '' END AS key,
+                CASE WHEN pg_get_expr(ad.adbin, ad.adrelid) LIKE 'nextval%%' THEN 'auto_increment' ELSE '' END AS extra,
+                COALESCE(col_description(a.attrelid, a.attnum), '') AS comment
+            FROM pg_attribute a
+            LEFT JOIN pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum
+            LEFT JOIN LATERAL (
+                SELECT c.contype FROM pg_constraint c
+                WHERE c.conrelid = a.attrelid AND c.contype = 'p' AND a.attnum = ANY(c.conkey)
+                LIMIT 1
+            ) pk ON true
+            WHERE a.attrelid = %s::regclass
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+            ORDER BY a.attnum;
+            """
+            qualified_tbl = f'"{resolved}"."{table_name}"'
+            _, rows, _ = self.execute_query(query, (qualified_tbl,))
+            cols = []
+            for row in rows:
+                cols.append({
+                    "name": decode_val(row[0]),
+                    "column_type": decode_val(row[1]),
+                    "nullable": bool(row[2]),
+                    "default": decode_val(row[3]),
+                    "key": decode_val(row[4]) or "",
+                    "extra": decode_val(row[5]) or "",
+                    "comment": decode_val(row[6]) or ""
+                })
+            return cols
 
     def get_primary_keys(self, schema, table_name):
         """Fetch list of primary key columns for a table."""
@@ -473,7 +581,7 @@ class DbEngine:
             for row in rows:
                 # row[5] is the pk flag (1-based index in composite PK, 0 if not PK)
                 if row[5]:
-                    pk_cols.append(row[1])
+                    pk_cols.append(decode_val(row[1]))
             return pk_cols
         
         resolved = self._resolve_schema(schema)
@@ -484,7 +592,7 @@ class DbEngine:
             WHERE table_schema = %s AND table_name = %s AND column_key = 'PRI';
             """
             _, rows, _ = self.execute_query(query, (resolved, table_name))
-            return [row[0] for row in rows]
+            return [decode_val(row[0]) for row in rows]
         else:
             query = """
             SELECT kcu.column_name
@@ -497,7 +605,7 @@ class DbEngine:
               AND tc.table_name = %s;
             """
             _, rows, _ = self.execute_query(query, (resolved, table_name))
-            return [row[0] for row in rows]
+            return [decode_val(row[0]) for row in rows]
 
     def update_row(self, schema, table_name, primary_keys_dict, updates_dict):
         """
@@ -610,14 +718,18 @@ class DbEngine:
         if resolved in self._funcs_cache:
             return self._funcs_cache[resolved]
         if self.db_type == "mysql":
-            query = """
-            SELECT routine_name 
-            FROM information_schema.routines 
-            WHERE routine_schema = %s
-            ORDER BY routine_name;
-            """
-            _, rows, _ = self.execute_query(query, (resolved,))
-            funcs = [row[0] for row in rows]
+            funcs = []
+            try:
+                _, rows, _ = self.execute_query(f"SHOW PROCEDURE STATUS WHERE Db = '{resolved}';")
+                funcs.extend([decode_val(row[1]) for row in rows])
+            except Exception:
+                pass
+            try:
+                _, rows, _ = self.execute_query(f"SHOW FUNCTION STATUS WHERE Db = '{resolved}';")
+                funcs.extend([decode_val(row[1]) for row in rows])
+            except Exception:
+                pass
+            funcs.sort()
             self._funcs_cache[resolved] = funcs
             return funcs
         else:
@@ -628,7 +740,7 @@ class DbEngine:
             ORDER BY routine_name;
             """
             _, rows, _ = self.execute_query(query, (resolved,))
-            funcs = [row[0] for row in rows]
+            funcs = [decode_val(row[0]) for row in rows]
             self._funcs_cache[resolved] = funcs
             return funcs
 
@@ -648,6 +760,8 @@ class DbEngine:
                 _, rows, _ = self.execute_query(query, (resolved, func_name))
                 if rows:
                     r_type, definition = rows[0]
+                    r_type = decode_val(r_type)
+                    definition = decode_val(definition)
                     return f"/* CREATE {r_type} {func_name} */\n{definition or ''}"
                 return f"-- Definition for {resolved}.{func_name} could not be retrieved."
             except Exception:
@@ -661,7 +775,7 @@ class DbEngine:
             """
             try:
                 _, rows, _ = self.execute_query(query, (resolved, func_name))
-                return rows[0][0] if rows else ""
+                return decode_val(rows[0][0]) if rows else ""
             except Exception:
                 return f"-- Definition for {resolved}.{func_name} could not be retrieved."
 
@@ -685,7 +799,7 @@ class DbEngine:
             try:
                 _, rows, _ = self.execute_query(query)
                 if rows:
-                    return rows[0][1]
+                    return decode_val(rows[0][1])
             except Exception as e:
                 return f"-- Definition for {resolved}.{table_name} could not be retrieved: {str(e)}"
         else:
@@ -923,14 +1037,14 @@ class DbEngine:
             try:
                 _, rows, _ = self.execute_query(query)
                 if rows:
-                    return rows[0][1]
+                    return decode_val(rows[0][1])
             except Exception:
                 # Fallback to SHOW CREATE TABLE
                 query = f"SHOW CREATE TABLE {q_table};"
                 try:
                     _, rows, _ = self.execute_query(query)
                     if rows:
-                        return rows[0][1]
+                        return decode_val(rows[0][1])
                 except Exception as e:
                     return f"-- Definition for {resolved}.{view_name} could not be retrieved: {str(e)}"
             return f"-- Definition for {resolved}.{view_name} could not be retrieved."
@@ -945,7 +1059,7 @@ class DbEngine:
             try:
                 _, rows, _ = self.execute_query(query, (resolved, view_name))
                 if rows and rows[0][0]:
-                    return f"CREATE OR REPLACE VIEW {resolved}.{view_name} AS\n{rows[0][0]}"
+                    return f"CREATE OR REPLACE VIEW {resolved}.{view_name} AS\n{decode_val(rows[0][0])}"
                 return f"-- Definition for {resolved}.{view_name} could not be retrieved."
             except Exception as e:
                 return f"-- Definition for {resolved}.{view_name} could not be retrieved: {str(e)}"

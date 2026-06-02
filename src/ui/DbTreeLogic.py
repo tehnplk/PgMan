@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QTreeWidgetItem, QMenu, QMessageBox, QDialog
+from PyQt6.QtWidgets import QTreeWidgetItem, QMenu, QMessageBox, QDialog, QInputDialog
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCursor
 from src.DbEngine import DbEngine
@@ -312,14 +312,38 @@ class DbTreeWidget(DbTreeUI):
                 item.setExpanded(False)
                 item.setExpanded(True)
 
+        elif node_type == NODE_TYPE_TABLE_GROUP:
+            create_action = menu.addAction("Create New Table")
+            refresh_action = menu.addAction("Refresh")
+            
+            action = menu.exec(self.mapToGlobal(position))
+            if action == create_action:
+                self.create_new_table_for_group(item, data)
+            elif action == refresh_action:
+                profile = data["profile"]
+                dbname = data["dbname"]
+                schema = data.get("schema", "public")
+                engine = self.db_engines.get((profile["id"], dbname))
+                if engine:
+                    self.open_object_tab_signal.emit(engine, dbname, schema, "Tables", profile)
+
         elif node_type in (NODE_TYPE_TABLE, NODE_TYPE_VIEW):
             open_data_action = menu.addAction("Open Table Data")
+            design_action = None
+            drop_action = None
+            if node_type == NODE_TYPE_TABLE:
+                design_action = menu.addAction("Design Table")
+                drop_action = menu.addAction("Drop Table")
             query_action = menu.addAction("New Query Editor")
             ddl_action = menu.addAction("Show DDL")
             
             action = menu.exec(self.mapToGlobal(position))
             if action == open_data_action:
                 self.on_item_double_clicked(item, 0)
+            elif action == design_action and design_action:
+                self.open_designer_for_node(data)
+            elif action == drop_action and drop_action:
+                self.drop_table_for_node(item, data)
             elif action == query_action:
                 self.open_query_for_node(data)
             elif action == ddl_action:
@@ -345,6 +369,88 @@ class DbTreeWidget(DbTreeUI):
                 show_exception_dialog(self, "Error", f"Could not retrieve definition:\n{str(e)}")
             finally:
                 self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+
+    def open_designer_for_node(self, data):
+        profile = data["profile"]
+        dbname = data["dbname"]
+        schema = data.get("schema", "public")
+        table_name = data.get("table_name")
+
+        engine = self.db_engines.get((profile["id"], dbname))
+        if engine:
+            self.open_table_designer_signal.emit(engine, dbname, schema, table_name, False)
+
+    def create_new_table_for_group(self, item, data):
+        profile = data["profile"]
+        dbname = data["dbname"]
+        schema = data.get("schema", "public")
+        engine = self.db_engines.get((profile["id"], dbname))
+        if not engine:
+            return
+            
+        name, ok = QInputDialog.getText(self, "Create New Table", "Enter table name:")
+        if ok and name.strip():
+            table_name = name.strip()
+            self.open_table_designer_signal.emit(engine, dbname, schema, table_name, True)
+
+    def drop_table_for_node(self, item, data):
+        profile = data["profile"]
+        dbname = data["dbname"]
+        schema = data.get("schema", "public")
+        table_name = data.get("table_name")
+        engine = self.db_engines.get((profile["id"], dbname))
+        if not engine or not table_name:
+            return
+            
+        table_ref = engine.quote_table_name(schema, table_name)
+        reply = QMessageBox.question(
+            self, "Confirm Drop Table",
+            f"Are you sure you want to DROP the table {table_ref}?\n\nThis action cannot be undone and all data in the table will be lost.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.setCursor(QCursor(Qt.CursorShape.WaitCursor))
+            try:
+                sql = f"DROP TABLE {table_ref};"
+                engine.execute_query(sql, fetch_results=False)
+                engine.clear_cache()
+                
+                parent = item.parent()
+                if parent:
+                    parent.removeChild(item)
+                
+                # Close any open TableViewerTab or TableDesignerTab for this table
+                main_win = self.window()
+                if hasattr(main_win, "tabs"):
+                    from src.ui.TableViewerLogic import TableViewerTab
+                    from src.ui.TableDesignerLogic import TableDesignerTab
+                    tabs_to_close = []
+                    for idx in range(main_win.tabs.count()):
+                        w = main_win.tabs.widget(idx)
+                        if isinstance(w, TableViewerTab) or isinstance(w, TableDesignerTab):
+                            if w.dbname == dbname and w.schema == schema and w.table_name == table_name:
+                                tabs_to_close.append(idx)
+                    for idx in sorted(tabs_to_close, reverse=True):
+                        w = main_win.tabs.widget(idx)
+                        if w:
+                            w.deleteLater()
+                        main_win.tabs.removeTab(idx)
+                        
+                # Refresh any open ObjectTab
+                if hasattr(main_win, "tabs"):
+                    from src.ui.ObjectTabLogic import ObjectTab
+                    for idx in range(main_win.tabs.count()):
+                        w = main_win.tabs.widget(idx)
+                        if isinstance(w, ObjectTab):
+                            if w.db_engine == engine and w.schema == schema and w.group_name == "Tables":
+                                w.refresh_data()
+                                
+            except Exception as e:
+                show_exception_dialog(self, "Error", f"Failed to drop table:\n{str(e)}")
+            finally:
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+
 
     def open_query_for_node(self, data):
         profile = data["profile"]
