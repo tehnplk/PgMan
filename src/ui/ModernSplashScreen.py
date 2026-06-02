@@ -137,6 +137,14 @@ class ModernSplashScreen(QSplashScreen):
         version_rect = QRect(body_rect.x(), title_rect.bottom() - 2, body_rect.width(), 20)
         painter.drawText(version_rect, Qt.AlignmentFlag.AlignCenter, f"Version {VERSION}")
         
+        # 5.1 Draw "by TENz"
+        by_tenz_font = QFont("Segoe UI", 9)
+        by_tenz_font.setItalic(True)
+        painter.setFont(by_tenz_font)
+        painter.setPen(self.version_color)
+        by_tenz_rect = QRect(body_rect.x(), version_rect.bottom() - 2, body_rect.width(), 20)
+        painter.drawText(by_tenz_rect, Qt.AlignmentFlag.AlignCenter, "by TENz")
+        
         # 6. Progress bar layout configuration
         bar_height = 4
         bar_margin = 48
