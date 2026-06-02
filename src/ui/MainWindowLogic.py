@@ -194,5 +194,13 @@ class MainWindow(MainWindowUI):
             self.theme_btn.setText("🌙 Dark Mode")
         else:
             self.theme_btn.setText("☀ Light Mode")
+        
+        # Update cached theme in any active TableViewerTab models
+        from src.ui.TableViewerLogic import TableViewerTab
+        for idx in range(self.tabs.count()):
+            w = self.tabs.widget(idx)
+            if isinstance(w, TableViewerTab) and hasattr(w, "model"):
+                w.model._cached_theme = new_theme.lower()
+                w.model.layoutChanged.emit()
             
         self.status.showMessage(f"Switched to {new_theme} mode.")

@@ -46,6 +46,10 @@ class EditableSqlTableModel(QAbstractTableModel):
         self.ORIGINAL_OFFSET = len(self.cols) + 2
         self.IS_NEW_OFFSET = len(self.cols) + 3
         
+        # Cache theme for BackgroundRole to avoid QSettings overhead on every data() call
+        settings = QSettings("PgMan", "ThemeSettings")
+        self._cached_theme = settings.value("theme", "dark").lower()
+        
         # Each row is a list: [col_0, ..., col_N, is_deleted, edited_dict, original_row, is_new]
         self.rows_data = []
         for r in (rows or []):
@@ -73,6 +77,8 @@ class EditableSqlTableModel(QAbstractTableModel):
             
         row = index.row()
         col = index.column()
+        if row < 0 or row >= len(self.rows_data) or col < 0 or col >= len(self.cols):
+            return None
         row_data = self.rows_data[row]
         
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
@@ -82,8 +88,7 @@ class EditableSqlTableModel(QAbstractTableModel):
             return str(val)
             
         elif role == Qt.ItemDataRole.BackgroundRole:
-            settings = QSettings("PgMan", "ThemeSettings")
-            theme = settings.value("theme", "dark").lower()
+            theme = self._cached_theme
             
             if row_data[self.DELETED_OFFSET]:
                 return QColor(250, 219, 216) if theme == "light" else QColor(96, 43, 41)
@@ -114,6 +119,8 @@ class EditableSqlTableModel(QAbstractTableModel):
             
         row = index.row()
         col = index.column()
+        if row < 0 or row >= len(self.rows_data):
+            return False
         row_data = self.rows_data[row]
         
         if value == "[NULL]" or value == "":
@@ -219,7 +226,8 @@ class EditableSqlTableModel(QAbstractTableModel):
                 for idx, col_name in enumerate(self.cols):
                     if row_data[idx] is not None:
                         insert_dict[col_name] = row_data[idx]
-                inserts.append(insert_dict)
+                if insert_dict:  # Skip rows where all columns are NULL
+                    inserts.append(insert_dict)
             elif row_data[self.EDITED_OFFSET]:
                 pks = {}
                 orig_row = row_data[self.ORIGINAL_OFFSET]
@@ -280,10 +288,9 @@ class TableViewerTab(TableViewerUI):
         if source == self.table_view and event.type() == QEvent.Type.KeyPress:
             if event.key() == Qt.Key.Key_Down:
                 current_index = self.table_view.currentIndex()
-                if current_index.isValid() and hasattr(self, "model"):
-                    row = current_index.row()
+                if hasattr(self, "model"):
                     rowCount = self.model.rowCount()
-                    if row == rowCount - 1:
+                    if rowCount == 0 or (current_index.isValid() and current_index.row() == rowCount - 1):
                         self.add_row()
                         return True
             elif event.key() == Qt.Key.Key_Escape:
@@ -345,6 +352,14 @@ class TableViewerTab(TableViewerUI):
         self.set_loading_state(True)
         self.status_bar_lbl.setText("⏳ Loading table data...")
         
+        # Disconnect previous worker signals to prevent stale results
+        if hasattr(self, 'worker') and self.worker is not None:
+            try:
+                self.worker.finished.disconnect(self.on_load_success)
+                self.worker.failed.disconnect(self.on_load_failed)
+            except (TypeError, RuntimeError):
+                pass
+        
         self.page_size = int(self.limit_combo.currentText())
         offset = (self.current_page - 1) * self.page_size
         
@@ -396,8 +411,12 @@ class TableViewerTab(TableViewerUI):
     def delete_row(self):
         if not hasattr(self, "model"):
             return
+        
+        sel_model = self.table_view.selectionModel()
+        if sel_model is None:
+            return
             
-        indexes = self.table_view.selectionModel().selectedRows()
+        indexes = sel_model.selectedRows()
         if not indexes:
             # Fallback to the current row if no entire row is selected
             current_index = self.table_view.currentIndex()
@@ -467,17 +486,18 @@ class TableViewerTab(TableViewerUI):
     def show_context_menu(self, position):
         menu = QMenu(self)
         
+        sel_model = self.table_view.selectionModel()
         index = self.table_view.indexAt(position)
-        if index.isValid():
+        if index.isValid() and sel_model is not None:
             # If the row is not already selected, select it to make operations intuitive
-            if not self.table_view.selectionModel().isRowSelected(index.row()):
+            if not sel_model.isRowSelected(index.row()):
                 self.table_view.selectRow(index.row())
                 
         # 1. Add Row
         add_action = menu.addAction("➕ Add Row")
         
         # 2. Delete Row(s)
-        selected_rows = self.table_view.selectionModel().selectedRows()
+        selected_rows = sel_model.selectedRows() if sel_model else []
         delete_action = None
         if selected_rows:
             delete_action = menu.addAction("❌ Delete Row(s)")
@@ -486,7 +506,9 @@ class TableViewerTab(TableViewerUI):
         
         # 3. Set Cell to NULL (if clicking an active, non-null cell)
         null_action = None
-        if index.isValid() and hasattr(self, "model") and not self.model.rows_data[index.row()][self.model.DELETED_OFFSET]:
+        if (index.isValid() and hasattr(self, "model")
+                and index.row() < len(self.model.rows_data)
+                and not self.model.rows_data[index.row()][self.model.DELETED_OFFSET]):
             row = index.row()
             col = index.column()
             val = self.model.rows_data[row][col]
