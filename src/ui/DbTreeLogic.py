@@ -272,6 +272,10 @@ class DbTreeWidget(DbTreeUI):
         if node_type == NODE_TYPE_CONNECTION:
             open_action = menu.addAction("Open Connection")
             close_action = menu.addAction("Close Connection")
+            create_db_action = None
+            db_type = data["profile"].get("db_type", "PostgreSQL").lower()
+            if db_type != "sqlite":
+                create_db_action = menu.addAction("Create New Database")
             menu.addSeparator()
             edit_action = menu.addAction("Edit Connection...")
             delete_action = menu.addAction("Delete Connection")
@@ -281,6 +285,8 @@ class DbTreeWidget(DbTreeUI):
                 item.setExpanded(True)
             elif action == close_action:
                 item.setExpanded(False)
+            elif action == create_db_action and create_db_action:
+                self.create_new_database(item, data)
             elif action == edit_action:
                 self.edit_connection(item, data["profile"])
             elif action == delete_action:
@@ -369,6 +375,42 @@ class DbTreeWidget(DbTreeUI):
                 show_exception_dialog(self, "Error", f"Could not retrieve definition:\n{str(e)}")
             finally:
                 self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+
+    def create_new_database(self, item, data):
+        profile = data["profile"]
+        db_type = profile.get("db_type", "PostgreSQL")
+        
+        name, ok = QInputDialog.getText(self, "Create New Database", "Enter database name:")
+        if not ok or not name.strip():
+            return
+            
+        dbname = name.strip()
+        self.setCursor(QCursor(Qt.CursorShape.WaitCursor))
+        try:
+            default_db = profile.get("database", "postgres" if db_type.lower() == "postgresql" else "")
+            engine_key = (profile["id"], default_db)
+            engine = self.db_engines.get(engine_key)
+            if not engine:
+                engine = self._create_engine(profile, default_db)
+                engine.connect()
+                self.db_engines[engine_key] = engine
+                
+            quoted_db = engine._quote_ident(dbname)
+            sql = f"CREATE DATABASE {quoted_db};"
+            engine.execute_query(sql, fetch_results=False)
+            
+            QMessageBox.information(self, "Success", f"Database '{dbname}' created successfully.")
+            
+            # Refresh connection node
+            data["loaded"] = False
+            item.setData(0, Qt.ItemDataRole.UserRole, data)
+            item.setExpanded(False)
+            item.setExpanded(True)
+            
+        except Exception as e:
+            show_exception_dialog(self, "Error", f"Failed to create database:\n{str(e)}")
+        finally:
+            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 
     def open_designer_for_node(self, data):
         profile = data["profile"]
