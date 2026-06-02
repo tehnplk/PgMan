@@ -1,10 +1,10 @@
 import sys
 import time
-from PyQt6.QtWidgets import QApplication, QSplashScreen
-from PyQt6.QtGui import QPixmap, QColor, QFont
+from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QSettings
 from src.ui.MainWindowLogic import MainWindow
-from src.ui.Stylesheets import get_theme_qss, get_resource_path
+from src.ui.Stylesheets import get_theme_qss
+from src.ui.ModernSplashScreen import ModernSplashScreen
 
 def main():
     if sys.platform == 'win32':
@@ -21,33 +21,20 @@ def main():
     theme = settings.value("theme", "dark")
     app.setStyleSheet(get_theme_qss(theme))
 
-    # 1. Initialize Splash Screen
-    pixmap = QPixmap(get_resource_path("resources/app_icon.png"))
-    pixmap = pixmap.scaled(320, 320, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-    
-    splash = QSplashScreen(pixmap)
-    splash.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
-    
-    # Configure font style for loading messages
-    font = QFont("Segoe UI", 10)
-    font.setBold(True)
-    splash.setFont(font)
-    
+    # 1. Initialize Modern Splash Screen
+    splash = ModernSplashScreen(theme=theme)
     splash.show()
     
     # 2. Simulate progressive modern loading messages
-    text_color = QColor("#00e5ff")  # Neon cyan accent color
-    from src.Config import VERSION
-    
-    splash.showMessage(f"PgMan v{VERSION} - Loading database configurations...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, text_color)
+    splash.showMessage("Loading database configurations...", 30)
     app.processEvents()
     time.sleep(0.5)
 
-    splash.showMessage(f"PgMan v{VERSION} - Initializing UI subsystems...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, text_color)
+    splash.showMessage("Initializing UI subsystems...", 65)
     app.processEvents()
     time.sleep(0.5)
 
-    splash.showMessage(f"PgMan v{VERSION} - Loading database explorer module...", Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, text_color)
+    splash.showMessage("Loading database explorer module...", 100)
     app.processEvents()
     time.sleep(0.4)
 
