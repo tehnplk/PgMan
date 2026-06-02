@@ -326,6 +326,12 @@ class TableViewerTab(TableViewerUI):
         if hasattr(self, "model"):
             self.model.add_row()
             self.table_view.scrollToBottom()
+            
+            # Select and start editing the first cell of the new row immediately
+            new_row_idx = self.model.rowCount() - 1
+            model_index = self.model.index(new_row_idx, 0)
+            self.table_view.setCurrentIndex(model_index)
+            self.table_view.edit(model_index)
 
     def delete_row(self):
         if not hasattr(self, "model"):
@@ -333,7 +339,12 @@ class TableViewerTab(TableViewerUI):
             
         indexes = self.table_view.selectionModel().selectedRows()
         if not indexes:
-            QMessageBox.warning(self, "No Row Selected", "Please select entire row by clicking the row header on the left.")
+            # Fallback to the current row if no entire row is selected
+            current_index = self.table_view.currentIndex()
+            if current_index.isValid():
+                self.model.mark_selected_row_for_deletion(current_index.row())
+            else:
+                self.status_bar_lbl.setText("⚠ Select a cell or row to delete.")
             return
             
         for index in indexes:
@@ -346,18 +357,7 @@ class TableViewerTab(TableViewerUI):
         updates, inserts, deletes = self.model.get_pending_changes()
         
         if not (updates or inserts or deletes):
-            QMessageBox.information(self, "No Changes", "No modifications to commit.")
-            return
-            
-        reply = QMessageBox.question(
-            self, "Commit Changes", 
-            f"Are you sure you want to write these modifications to the database?\n"
-            f"- Updates: {len(updates)}\n"
-            f"- Inserts: {len(inserts)}\n"
-            f"- Deletes: {len(deletes)}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+            self.status_bar_lbl.setText("No changes to commit.")
             return
 
         self.setCursor(Qt.CursorShape.WaitCursor)
@@ -374,7 +374,7 @@ class TableViewerTab(TableViewerUI):
             for ins in inserts:
                 self.db_engine.insert_row(self.schema, self.table_name, ins)
 
-            QMessageBox.information(self, "Success", "Changes successfully committed to database!")
+            self.status_bar_lbl.setText("✔ Changes successfully committed to database!")
             self.load_data()
         except Exception as e:
             show_exception_dialog(self, "Commit Failed", f"An error occurred while saving changes:\n{str(e)}\n\nReloading table data...")
