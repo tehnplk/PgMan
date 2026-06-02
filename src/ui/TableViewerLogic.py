@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QMessageBox, QMenu
-from PyQt6.QtCore import Qt, QAbstractTableModel, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QAbstractTableModel, QThread, pyqtSignal, QSettings, QModelIndex
 from PyQt6.QtGui import QColor
 from src.ui.TableViewerUI import TableViewerUI
 from src.ui.UiUtils import resize_columns_fast, show_exception_dialog, start_thread
@@ -82,12 +82,15 @@ class EditableSqlTableModel(QAbstractTableModel):
             return str(val)
             
         elif role == Qt.ItemDataRole.BackgroundRole:
+            settings = QSettings("PgMan", "ThemeSettings")
+            theme = settings.value("theme", "dark").lower()
+            
             if row_data[self.DELETED_OFFSET]:
-                return QColor("#5c2d30")  # Dark red for deleted
+                return QColor(250, 219, 216) if theme == "light" else QColor(96, 43, 41)
             elif row_data[self.IS_NEW_OFFSET]:
-                return QColor("#1e3f20")  # Dark green for new row
+                return QColor(213, 245, 227) if theme == "light" else QColor(34, 106, 68)
             elif col in row_data[self.EDITED_OFFSET]:
-                return QColor("#5c431e")  # Amber for edited
+                return QColor(250, 229, 211) if theme == "light" else QColor(96, 61, 32)
                 
         elif role == Qt.ItemDataRole.ForegroundRole:
             val = row_data[col]
@@ -127,11 +130,15 @@ class EditableSqlTableModel(QAbstractTableModel):
         return True
 
     def add_row(self):
-        self.beginInsertRows(self.index(len(self.rows_data), 0), len(self.rows_data), len(self.rows_data))
+        for row_data in self.rows_data:
+            if row_data[self.IS_NEW_OFFSET]:
+                return False
+        self.beginInsertRows(QModelIndex(), len(self.rows_data), len(self.rows_data))
         new_row = [None] * len(self.cols)
         new_row.extend([False, {}, [None] * len(self.cols), True])
         self.rows_data.append(new_row)
         self.endInsertRows()
+        return True
 
     def mark_selected_row_for_deletion(self, row):
         if row < 0 or row >= len(self.rows_data):
@@ -145,6 +152,29 @@ class EditableSqlTableModel(QAbstractTableModel):
             self.index(row, len(self.cols) - 1), 
             [Qt.ItemDataRole.BackgroundRole]
         )
+
+    def revert_row(self, row):
+        if row < 0 or row >= len(self.rows_data):
+            return
+            
+        row_data = self.rows_data[row]
+        if row_data[self.IS_NEW_OFFSET]:
+            # Remove the row from the model
+            self.beginRemoveRows(QModelIndex(), row, row)
+            self.rows_data.pop(row)
+            self.endRemoveRows()
+        else:
+            # Revert edited cells and restore original values
+            orig = row_data[self.ORIGINAL_OFFSET]
+            for i in range(len(self.cols)):
+                row_data[i] = orig[i]
+            row_data[self.EDITED_OFFSET] = {}
+            row_data[self.DELETED_OFFSET] = False
+            self.dataChanged.emit(
+                self.index(row, 0),
+                self.index(row, len(self.cols) - 1),
+                [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.BackgroundRole]
+            )
 
     def sort(self, column, order):
         self.layoutAboutToBeChanged.emit()
@@ -256,6 +286,20 @@ class TableViewerTab(TableViewerUI):
                     if row == rowCount - 1:
                         self.add_row()
                         return True
+            elif event.key() == Qt.Key.Key_Escape:
+                current_index = self.table_view.currentIndex()
+                if current_index.isValid() and hasattr(self, "model"):
+                    self.model.revert_row(current_index.row())
+                    return True
+            elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                current_index = self.table_view.currentIndex()
+                if current_index.isValid() and hasattr(self, "model"):
+                    row = current_index.row()
+                    if row < len(self.model.rows_data):
+                        row_data = self.model.rows_data[row]
+                        if row_data[self.model.IS_NEW_OFFSET]:
+                            self.commit_changes()
+                            return True
         return super().eventFilter(source, event)
 
     def set_loading_state(self, is_loading):
@@ -338,14 +382,16 @@ class TableViewerTab(TableViewerUI):
 
     def add_row(self):
         if hasattr(self, "model"):
-            self.model.add_row()
-            self.table_view.scrollToBottom()
-            
-            # Select and start editing the first cell of the new row immediately
-            new_row_idx = self.model.rowCount() - 1
-            model_index = self.model.index(new_row_idx, 0)
-            self.table_view.setCurrentIndex(model_index)
-            self.table_view.edit(model_index)
+            if self.model.add_row():
+                self.table_view.scrollToBottom()
+                
+                # Select and start editing the first cell of the new row immediately
+                new_row_idx = self.model.rowCount() - 1
+                model_index = self.model.index(new_row_idx, 0)
+                self.table_view.setCurrentIndex(model_index)
+                self.table_view.edit(model_index)
+            else:
+                self.status_bar_lbl.setText("⚠ A new uncommitted row already exists. Commit or cancel it first.")
 
     def delete_row(self):
         if not hasattr(self, "model"):
