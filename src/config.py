@@ -88,4 +88,4 @@ def delete_profile(profile_id):
     profiles = [p for p in profiles if p.get("id") != profile_id]
     save_profiles(profiles)
 
-VERSION = "0.1.0"
+from src.Version import version_name as VERSION

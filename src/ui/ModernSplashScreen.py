@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import QSplashScreen
 from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QLinearGradient, QPen
 from PyQt6.QtCore import Qt, QRect
 from src.ui.Stylesheets import get_resource_path
-from src.Config import VERSION
+from src.Version import version_name, version_release
 
 class ModernSplashScreen(QSplashScreen):
     def __init__(self, theme="dark"):
@@ -135,7 +135,7 @@ class ModernSplashScreen(QSplashScreen):
         painter.setFont(version_font)
         painter.setPen(self.version_color)
         version_rect = QRect(body_rect.x(), title_rect.bottom() - 2, body_rect.width(), 20)
-        painter.drawText(version_rect, Qt.AlignmentFlag.AlignCenter, f"Version {VERSION}")
+        painter.drawText(version_rect, Qt.AlignmentFlag.AlignCenter, f"v.{version_name} ({version_release})")
         
         # 5.1 Draw "by TENz"
         by_tenz_font = QFont("Segoe UI", 9)

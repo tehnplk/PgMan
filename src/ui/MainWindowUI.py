@@ -11,8 +11,7 @@ from src.ui.Stylesheets import get_resource_path
 class MainWindowUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        from src.Config import VERSION
-        self.setWindowTitle(f"PgMan v{VERSION} - PostgreSQL Client")
+        self.setWindowTitle("PgMan - PostgreSQL Client")
         self.resize(1100, 750)
         self.setWindowIcon(QIcon(get_resource_path("resources/app_icon.png")))
         self.init_ui()
@@ -42,11 +41,7 @@ class MainWindowUI(QMainWindow):
         self.theme_btn = QPushButton("🌙 Dark Mode")
         self.toolbar.addWidget(self.theme_btn)
 
-        # Version label
-        from PyQt6.QtWidgets import QLabel
-        self.version_lbl = QLabel(f"v{VERSION}")
-        self.version_lbl.setStyleSheet("color: #5c6370; font-size: 11px; padding: 0px 8px; font-family: Consolas, monospace;")
-        self.toolbar.addWidget(self.version_lbl)
+
 
         # 2. Main Central Splitter
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -69,3 +64,10 @@ class MainWindowUI(QMainWindow):
         self.status = QStatusBar()
         self.setStatusBar(self.status)
         self.status.showMessage("Ready")
+
+        # Version label (permanent widget on the far right)
+        from PyQt6.QtWidgets import QLabel
+        from src.Version import version_name, version_release
+        self.version_lbl = QLabel(f"v.{version_name} ({version_release})")
+        self.version_lbl.setStyleSheet("color: #5c6370; font-size: 11px; padding: 0px 8px; font-family: Consolas, monospace;")
+        self.status.addPermanentWidget(self.version_lbl)

@@ -100,6 +100,7 @@ QTableView, QTableWidget {
     selection-background-color: #3e4451;
     selection-color: #ffffff;
     border-radius: 6px;
+    font-size: 11px;
 }
 
 QHeaderView::section {
@@ -487,6 +488,7 @@ QTableView, QTableWidget {
     selection-background-color: #e2e8f0;
     selection-color: #0969da;
     border-radius: 6px;
+    font-size: 11px;
 }
 
 QHeaderView::section {
