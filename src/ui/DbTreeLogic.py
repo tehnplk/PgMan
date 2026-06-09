@@ -295,6 +295,10 @@ class DbTreeWidget(DbTreeUI):
         elif node_type == NODE_TYPE_DATABASE:
             query_action = menu.addAction("New Query Editor")
             refresh_action = menu.addAction("Refresh")
+            drop_db_action = None
+            db_type = data["profile"].get("db_type", "PostgreSQL").lower()
+            if db_type != "sqlite":
+                drop_db_action = menu.addAction("Drop This Database")
             
             action = menu.exec(self.mapToGlobal(position))
             if action == query_action:
@@ -304,6 +308,8 @@ class DbTreeWidget(DbTreeUI):
                 item.setData(0, Qt.ItemDataRole.UserRole, data)
                 item.setExpanded(False)
                 item.setExpanded(True)
+            elif action == drop_db_action and drop_db_action:
+                self.drop_database(item, data)
 
         elif node_type == NODE_TYPE_SCHEMA:
             query_action = menu.addAction("New Query Editor")
@@ -493,6 +499,103 @@ class DbTreeWidget(DbTreeUI):
             finally:
                 self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 
+    def drop_database(self, item, data):
+        profile = data["profile"]
+        dbname = data["dbname"]
+        db_type = profile.get("db_type", "PostgreSQL")
+        
+        reply = QMessageBox.question(
+            self, "Confirm Drop Database",
+            f"Are you sure you want to DROP the database '{dbname}'?\n\nThis action cannot be undone and all schemas, tables, and data in this database will be lost.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+            
+        self.setCursor(QCursor(Qt.CursorShape.WaitCursor))
+        try:
+            # 1. Close the active connection to the database we want to drop if it exists in cache
+            target_engine_key = (profile["id"], dbname)
+            if target_engine_key in self.db_engines:
+                try:
+                    self.db_engines[target_engine_key].close()
+                except Exception:
+                    pass
+                del self.db_engines[target_engine_key]
+                
+            # 2. Close any open tabs related to this database
+            main_win = self.window()
+            if hasattr(main_win, "tabs"):
+                from src.ui.QueryEditorLogic import QueryEditorTab
+                from src.ui.TableViewerLogic import TableViewerTab
+                from src.ui.ObjectTabLogic import ObjectTab
+                from src.ui.TableDesignerLogic import TableDesignerTab
+                tabs_to_close = []
+                for idx in range(main_win.tabs.count()):
+                    w = main_win.tabs.widget(idx)
+                    if isinstance(w, (QueryEditorTab, TableViewerTab, ObjectTab, TableDesignerTab)):
+                        if hasattr(w, "dbname") and w.dbname == dbname:
+                            tabs_to_close.append(idx)
+                        elif hasattr(w, "database_name") and w.database_name == dbname:
+                            tabs_to_close.append(idx)
+                for idx in sorted(tabs_to_close, reverse=True):
+                    w = main_win.tabs.widget(idx)
+                    if w:
+                        w.deleteLater()
+                    main_win.tabs.removeTab(idx)
+                    
+            # 3. Connect to a default database to execute the DROP DATABASE command
+            default_db = profile.get("database", "postgres" if db_type.lower() == "postgresql" else "")
+            # If the default database configured in the profile is the database we want to drop,
+            # we need to fallback to postgres for PostgreSQL, or another generic db.
+            if default_db == dbname:
+                default_db = "postgres" if db_type.lower() == "postgresql" else ""
+                
+            engine_key = (profile["id"], default_db)
+            engine = self.db_engines.get(engine_key)
+            if not engine:
+                engine = self._create_engine(profile, default_db)
+                engine.connect()
+                self.db_engines[engine_key] = engine
+                
+            quoted_db = engine._quote_ident(dbname)
+            
+            # Execute DROP DATABASE. For PostgreSQL, try WITH (FORCE) first, then fallback if it fails.
+            if db_type.lower() == "postgresql":
+                try:
+                    sql = f"DROP DATABASE {quoted_db} WITH (FORCE);"
+                    engine.execute_query(sql, fetch_results=False)
+                except Exception:
+                    # Fallback: terminate connections then drop database normally
+                    try:
+                        terminate_sql = f"""
+                        SELECT pg_terminate_backend(pg_stat_activity.pid)
+                        FROM pg_stat_activity
+                        WHERE pg_stat_activity.datname = '{dbname}'
+                          AND pid <> pg_backend_pid();
+                        """
+                        engine.execute_query(terminate_sql, fetch_results=False)
+                    except Exception:
+                        pass
+                    sql = f"DROP DATABASE {quoted_db};"
+                    engine.execute_query(sql, fetch_results=False)
+            else:
+                # MySQL or other
+                sql = f"DROP DATABASE {quoted_db};"
+                engine.execute_query(sql, fetch_results=False)
+                
+            QMessageBox.information(self, "Success", f"Database '{dbname}' dropped successfully.")
+            
+            # Remove the database item from the tree
+            parent = item.parent()
+            if parent:
+                parent.removeChild(item)
+                
+        except Exception as e:
+            show_exception_dialog(self, "Error", f"Failed to drop database:\n{str(e)}")
+        finally:
+            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 
     def open_query_for_node(self, data):
         profile = data["profile"]
